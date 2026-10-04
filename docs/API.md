@@ -67,7 +67,7 @@ await api("/users/me", {
 
 ## Categorías
 
-Los códigos se validan como `UPPER_SNAKE_CASE` y quedan estables. Los listados se ordenan por nombre ascendente; las subcategorías se ordenan igual. Las prioridades pueden ser `null` y nunca se reemplazan por un valor inventado. Cuando ambas prioridades son nulas, la prioridad efectiva sigue siendo `null`.
+Los códigos se validan como `UPPER_SNAKE_CASE` y quedan estables. Los listados se ordenan por nombre ascendente y desempatan por UUID ascendente; las subcategorías se ordenan igual. Las prioridades pueden ser `null` y nunca se reemplazan por un valor inventado. Cuando ambas prioridades son nulas, la prioridad efectiva sigue siendo `null`.
 
 ### `GET /api/v1/categories`
 

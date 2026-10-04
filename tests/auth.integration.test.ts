@@ -910,7 +910,7 @@ describe("OpenAPI and Swagger UI", () => {
 
     it("serves Swagger UI at /api/docs", async () => {
         const { app } = createContext();
-        const response = await request(app).get("/api/docs").expect(200);
+        const response = await request(app).get("/api/docs").redirects(1).expect(200);
         expect(response.text).toContain("Swagger UI");
         expect(response.text).toContain("swagger-ui-bundle.js");
     });

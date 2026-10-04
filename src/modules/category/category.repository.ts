@@ -14,7 +14,7 @@ import {
 
 const activeSubcategories = () => ({
     where: { isActive: true },
-    orderBy: { name: "asc" as const },
+    orderBy: [{ name: "asc" as const }, { id: "asc" as const }],
 });
 
 function mapPrismaError(error: unknown): Error | null {
@@ -53,7 +53,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
         const categories = await this.prisma.category.findMany({
             ...(!includeInactive ? { where: { isActive: true } } : {}),
             include: { subcategories: activeSubcategories() },
-            orderBy: { name: "asc" },
+            orderBy: [{ name: "asc" }, { id: "asc" }],
         });
         return categories as CategoryRecord[];
     }
@@ -171,7 +171,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
                 createdAt: true,
                 updatedAt: true,
             },
-            orderBy: { title: "asc" },
+            orderBy: [{ title: "asc" }, { id: "asc" }],
         });
     }
 }

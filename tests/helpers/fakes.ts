@@ -238,12 +238,12 @@ export class FakeCatalogRepository implements CatalogRepository {
     async listCategories(includeInactive: boolean): Promise<CategoryRecord[]> {
         return this.categories
             .filter((category) => includeInactive || category.isActive)
-            .sort((a, b) => a.name.localeCompare(b.name))
+            .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
             .map((category) => ({
                 ...category,
                 subcategories: category.subcategories
                     .filter((subcategory) => subcategory.isActive)
-                    .sort((a, b) => a.name.localeCompare(b.name)),
+                    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
             }));
     }
 
@@ -322,7 +322,7 @@ export class FakeCatalogRepository implements CatalogRepository {
             .filter((suggestion) => subcategoryId === undefined
                 ? suggestion.subcategoryId === null
                 : suggestion.subcategoryId === null || suggestion.subcategoryId === subcategoryId)
-            .sort((a, b) => a.title.localeCompare(b.title));
+            .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
     }
 }
 

@@ -19,11 +19,12 @@
 | Health/readiness | DONE | 2/2 | 3 de disponibilidad |
 | Seguridad (Helmet, CORS, rate limit, Zod) | DONE | Transversal | Cubierto por integración |
 | Logging estructurado y request ID | DONE | Transversal | Cubierto por respuestas de error |
-| Categories API | DONE | 4/4 | Cubierto en integración |
-| Subcategories API | DONE | 3/3 | Cubierto en integración |
-| Ticket form catalog | DONE | 1/1 | Categorías activas y prioridades null |
-| Support suggestions read API | DONE | 1/1 | Sin seed ficticio; soporta respuesta vacía |
-| OpenAPI / Swagger UI | DONE | 2/2 | Documento validado y UI servida |
+| Categories API | DONE | 4/4 | 18 casos HTTP/rol/validación |
+| Subcategories API | DONE | 3/3 | 7 casos HTTP/rol/validación |
+| Ticket form catalog | DONE | 1/1 | 4 casos; activos y prioridades null |
+| Support suggestions read API | DONE | 1/1 | 4 casos; sin seed ficticio |
+| Resolución de prioridad efectiva | DONE | Utilidad compartida | 3 casos; herencia y null |
+| OpenAPI / Swagger UI | DONE | 2/2 | 5 casos; schema validado y UI servida |
 | Tickets y creación | NOT_STARTED | 0/13 | 0 |
 | Timeline / eventos de ticket | NOT_STARTED | Incluido en tickets | 0 |
 | Autoasignación y asignación administrativa | NOT_STARTED | Incluido en tickets | 0 |
@@ -79,7 +80,7 @@
 - La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
 - No se implementó OpenAPI en esta etapa porque no existía una estructura previa reutilizable y el alcance lo declaró opcional.
 - No se implementaron endpoints de categorías, tickets, bitácora, inventario, dashboard, reportes, SMTP ni worker de notificaciones.
-- Categorías y subcategorías se ordenan por `name ASC`; el listado usa una lectura anidada del repositorio Prisma para evitar N+1.
+- Categorías y subcategorías se ordenan por `name ASC, id ASC`; sugerencias por `title ASC, id ASC`. El listado usa una lectura anidada del repositorio Prisma para evitar N+1.
 - `includeInactive=true` está disponible únicamente para ADMIN. Las bajas son lógicas e idempotentes; desactivar categoría no desactiva sus subcategorías.
 - `SupportSuggestion` no recibió seed: no había contenido técnico autorizado para inventar. El endpoint devuelve una lista vacía cuando no hay filas activas.
 - Los tests de etapa 3 usan repositorios en memoria y Supertest; no conectan ni realizan operaciones destructivas en `support_system`. La implementación Prisma aún no tiene una prueba de integración con una base PostgreSQL exclusiva para tests.
@@ -89,7 +90,7 @@
 
 - `prisma validate`: correcto.
 - `prisma generate`: correcto; Prisma Client 7.9.1 generado.
-- `pnpm test`: 1 archivo y 71 pruebas aprobadas.
+- `pnpm test`: 1 archivo y 75 pruebas aprobadas.
 - `pnpm build`: correcto.
 - `tsc --noEmit`: correcto.
 - No existe login por contraseña ni campo `password` en `User`.
