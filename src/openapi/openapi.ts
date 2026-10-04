@@ -304,7 +304,7 @@ export const openApiDocument = {
                 summary: "Crear ticket",
                 description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados con UNIQUE. Las solicitudes de software requieren TEACHER.",
                 tags: ["Tickets"], security: cookieSecurity,
-                roles: ["USER", "SUPPORT", "SUB_MANAGER", "ADMIN"],
+                roles: ["USER"],
                 requestBody: { required: true, content: json({ $ref: "#/components/schemas/CreateTicketRequest" }, {
                     title: "Proyector sin señal", categoryId: "00000000-0000-4000-8000-000000000001",
                     subcategoryId: "00000000-0000-4000-8000-000000000002", building: "Edificio 6", room: "603",

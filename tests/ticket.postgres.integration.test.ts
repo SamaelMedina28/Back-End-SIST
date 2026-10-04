@@ -174,6 +174,14 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(ticket.events[0]).toMatchObject({ type: "CREATED", actorId: user.id, fromStatus: null, toStatus: "OPEN" });
     });
 
+    it.each([Role.SUPPORT, Role.SUB_MANAGER, Role.ADMIN])("rechaza creación desde el rol %s", async (role) => {
+        const user = await createTestUser({ role, supportAreas: [SupportArea.HARDWARE] });
+        const response = await post(user, baseBody(hardwareId, hardwareSubId));
+        expect(response.status).toBe(403);
+        expect(response.body.error.code).toBe("FORBIDDEN");
+        expect(await prisma.ticket.count()).toBe(0);
+    });
+
     it.each(["priority", "status", "reporterId", "assigneeId", "duplicateKey", "number", "code"])("rechaza mass assignment: %s", async (field) => {
         const user = await createTestUser();
         const response = await post(user, { ...baseBody(hardwareId, hardwareSubId), [field]: "forged" });

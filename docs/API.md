@@ -161,7 +161,7 @@ No se sembraron sugerencias ficticias. El endpoint devuelve `[]` hasta que exist
 
 ## Tickets Core
 
-Las cuatro rutas requieren la cookie de sesión HTTP-only. `USER` ve sus reportes; `SUPPORT` y `SUB_MANAGER` ven tickets de sus `supportAreas`; `ADMIN` ve todos. Crear un ticket utiliza siempre al usuario de la sesión como reportero. `SUPPORT`, `SUB_MANAGER` y `ADMIN` también pueden crear tickets propios; el límite de diez activos corresponde al rol `USER`.
+Las cuatro rutas requieren la cookie de sesión HTTP-only. Solo `USER` crea tickets y siempre es el reportero de su propio ticket; puede ver solo sus reportes. `SUPPORT` y `SUB_MANAGER` ven tickets de sus `supportAreas`; `ADMIN` ve todos.
 
 ### `POST /api/v1/tickets`
 
@@ -201,7 +201,7 @@ Respuesta `201`:
 }
 ```
 
-Errores: `401 AUTHENTICATION_REQUIRED`; `403 SOFTWARE_REQUEST_REQUIRES_TEACHER`; `404 CATEGORY_NOT_FOUND`, `SUBCATEGORY_NOT_FOUND`, `INVENTORY_ITEM_NOT_FOUND`; `409 CATEGORY_INACTIVE`, `SUBCATEGORY_INACTIVE`, `INVENTORY_ITEM_INACTIVE`, `TICKET_PRIORITY_NOT_CONFIGURED`, `DUPLICATE_TICKET`, `ACTIVE_TICKET_LIMIT_REACHED`; `422 VALIDATION_ERROR` o `SUBCATEGORY_CATEGORY_MISMATCH`. Los errores conservan `{ success: false, error: { code, message, fields? }, requestId }`.
+Errores: `401 AUTHENTICATION_REQUIRED`; `403 FORBIDDEN` para roles distintos de `USER` o `SOFTWARE_REQUEST_REQUIRES_TEACHER` para comunidad distinta de docente; `404 CATEGORY_NOT_FOUND`, `SUBCATEGORY_NOT_FOUND`, `INVENTORY_ITEM_NOT_FOUND`; `409 CATEGORY_INACTIVE`, `SUBCATEGORY_INACTIVE`, `INVENTORY_ITEM_INACTIVE`, `TICKET_PRIORITY_NOT_CONFIGURED`, `DUPLICATE_TICKET`, `ACTIVE_TICKET_LIMIT_REACHED`; `422 VALIDATION_ERROR` o `SUBCATEGORY_CATEGORY_MISMATCH`. Los errores conservan `{ success: false, error: { code, message, fields? }, requestId }`.
 
 ```ts
 const ticket = await api("/tickets", { method: "POST", body: JSON.stringify({

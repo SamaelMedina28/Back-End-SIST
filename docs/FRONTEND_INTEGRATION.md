@@ -220,7 +220,7 @@ La documentación interactiva está disponible en `/api/docs` y el documento Ope
 
 ## Crear y consultar tickets
 
-El formulario debe cargar `/catalog/ticket-form` antes de mostrar categorías. Envía solo los campos aceptados; `reporterId`, `priority`, `status`, `code` y snapshots son responsabilidad del backend. La subcategoría es obligatoria si la categoría seleccionada tiene subcategorías activas. Una prioridad efectiva null impide crear el ticket hasta que ADMIN configure el catálogo.
+El formulario debe cargar `/catalog/ticket-form` antes de mostrar categorías. Solo cuentas con rol `USER` pueden crear tickets. Envía solo los campos aceptados; `reporterId`, `priority`, `status`, `code` y snapshots son responsabilidad del backend. La subcategoría es obligatoria si la categoría seleccionada tiene subcategorías activas. Una prioridad efectiva null impide crear el ticket hasta que ADMIN configure el catálogo.
 
 ```ts
 const ticket = await api<{ id: string; code: string }>("/tickets", {
