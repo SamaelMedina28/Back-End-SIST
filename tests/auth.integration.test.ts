@@ -902,13 +902,16 @@ describe("OpenAPI and Swagger UI", () => {
         await SwaggerParser.validate(openApiDocument as never);
     });
 
-    it("documents implemented routes and does not document tickets", async () => {
+    it("documents all four Tickets Core operations", async () => {
         const { app } = createContext();
         const response = await request(app).get("/api/openapi.json").expect(200);
         expect(response.body.paths["/api/v1/categories/{id}"].patch).toBeDefined();
         expect(response.body.paths["/api/v1/catalog/ticket-form"].get).toBeDefined();
         expect(response.body.paths["/api/v1/auth/me"].get).toBeDefined();
-        expect(Object.keys(response.body.paths).some((path) => path.includes("tickets"))).toBe(true);
+        expect(response.body.paths["/api/v1/tickets"].post).toBeDefined();
+        expect(response.body.paths["/api/v1/tickets"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/tickets/{id}"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/tickets/{id}/events"].get).toBeDefined();
     });
 
     it("serves Swagger UI at /api/docs", async () => {
