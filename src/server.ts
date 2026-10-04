@@ -34,4 +34,3 @@ async function shutdown(signal: string): Promise<void> {
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
-

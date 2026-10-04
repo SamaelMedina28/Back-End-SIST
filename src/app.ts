@@ -46,4 +46,3 @@ export function createApp(dependencies: AppDependencies): Application {
 
     return app;
 }
-
