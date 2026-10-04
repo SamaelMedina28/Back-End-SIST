@@ -22,6 +22,7 @@ import {
     CommunityType,
     FakeGoogleProvider,
     FakeCatalogRepository,
+    FakeTicketRepository,
     FakeUserRepository,
     makeCategory,
     makeSubcategory,
@@ -50,6 +51,7 @@ function createContext(input: {
         config: { ...testConfig, nodeEnv: input.nodeEnv ?? testConfig.nodeEnv },
         users,
         catalog,
+        tickets: new FakeTicketRepository(),
         google,
         checkDatabase: input.checkDatabase ?? (async () => undefined),
     });
@@ -190,6 +192,7 @@ describe("OAuth flow", () => {
             config: testConfig,
             users,
             catalog: new FakeCatalogRepository(),
+            tickets: new FakeTicketRepository(),
             google: new GoogleOAuthProvider(testConfig),
             checkDatabase: async () => undefined,
         });

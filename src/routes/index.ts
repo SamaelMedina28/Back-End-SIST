@@ -15,11 +15,16 @@ import { createCategoryRouter, createSubcategoryRouter } from "../modules/catego
 import { CatalogController } from "../modules/catalog/catalog.controller.js";
 import { CatalogService } from "../modules/catalog/catalog.service.js";
 import { createCatalogRouter } from "../modules/catalog/catalog.routes.js";
+import type { TicketRepository } from "../modules/ticket/ticket.types.js";
+import { TicketService } from "../modules/ticket/ticket.service.js";
+import { TicketController } from "../modules/ticket/ticket.controller.js";
+import { createTicketRouter } from "../modules/ticket/ticket.routes.js";
 
 export function createApiRouter(input: {
     config: AppConfig;
     users: UserRepository;
     catalog: CatalogRepository;
+    tickets: TicketRepository;
     google: GoogleIdentityProvider;
 }): ExpressRouter {
     const router = Router();
@@ -33,6 +38,7 @@ export function createApiRouter(input: {
     const userController = new UserController(new UserService(input.users));
     const categoryController = new CategoryController(new CategoryService(input.catalog));
     const catalogController = new CatalogController(new CatalogService(input.catalog));
+    const ticketController = new TicketController(new TicketService(input.tickets, input.catalog));
 
     router.use("/auth", createAuthRouter({
         controller: authController,
@@ -60,6 +66,12 @@ export function createApiRouter(input: {
     }));
     router.use("/subcategories", createSubcategoryRouter({
         controller: categoryController,
+        users: input.users,
+        sessions,
+        config: input.config,
+    }));
+    router.use("/tickets", createTicketRouter({
+        controller: ticketController,
         users: input.users,
         sessions,
         config: input.config,

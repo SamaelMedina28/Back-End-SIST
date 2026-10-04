@@ -28,6 +28,16 @@ import {
     CatalogRepositoryConflict,
     CatalogRepositoryNotFound,
 } from "../../src/modules/category/category.types.js";
+import type { TicketRepository } from "../../src/modules/ticket/ticket.types.js";
+
+export class FakeTicketRepository implements TicketRepository {
+    private unused(): never { throw new Error("FakeTicketRepository: ticket method was not configured for this test"); }
+    async findInventoryItem(): Promise<null> { return this.unused(); }
+    async createWithCreatedEvent(): Promise<never> { return this.unused(); }
+    async list(): Promise<never> { return this.unused(); }
+    async findById(): Promise<null> { return this.unused(); }
+    async events(): Promise<never> { return this.unused(); }
+}
 
 export const testConfig: AppConfig = {
     nodeEnv: "test",

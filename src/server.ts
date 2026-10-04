@@ -6,17 +6,20 @@ import { logger } from "./common/logger.js";
 import { GoogleOAuthProvider } from "./modules/auth/google.provider.js";
 import { PrismaUserRepository } from "./modules/auth/user.repository.js";
 import { PrismaCatalogRepository } from "./modules/category/category.repository.js";
+import { PrismaTicketRepository } from "./modules/ticket/ticket.repository.js";
 
 const config = loadConfig();
 const prisma = createPrismaClient(config.databaseUrl);
 const users = new PrismaUserRepository(prisma);
 const catalog = new PrismaCatalogRepository(prisma);
+const tickets = new PrismaTicketRepository(prisma);
 const google = new GoogleOAuthProvider(config);
 
 const app = createApp({
     config,
     users,
     catalog,
+    tickets,
     google,
     checkDatabase: async () => {
         await prisma.$queryRaw`SELECT 1`;
