@@ -35,3 +35,16 @@ export const ticketListQuerySchema = z.object({
 });
 
 export const ticketIdParamsSchema = z.object({ id: uuid });
+
+export const emptyBodySchema = z.object({}).strict();
+export const adminAssigneeSchema = z.object({ assigneeId: uuid }).strict();
+export const statusMutationSchema = z.object({
+    status: z.enum(TicketStatus), note: z.string().trim().min(1).max(500).optional(),
+}).strict().superRefine((value, context) => {
+    if (value.status === TicketStatus.CANCELLED && !value.note) {
+        context.addIssue({ code: "custom", path: ["note"], message: "La nota es obligatoria para cancelar el ticket." });
+    }
+});
+export const priorityMutationSchema = z.object({
+    priority: z.enum(TicketPriority), reason: z.string().trim().min(1).max(500),
+}).strict();

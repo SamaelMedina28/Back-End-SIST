@@ -2,13 +2,18 @@ import { Prisma, Role, TicketStatus, type PrismaClient, type TicketPriority } fr
 import { AppError } from "../../common/errors/app-error.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import { MAX_ACTIVE_TICKETS } from "../category/category.service.js";
-import type { TicketCreateInput, TicketQuery, TicketRecord, TicketRepository } from "./ticket.types.js";
+import type { TicketCreateInput, TicketMutationSnapshot, TicketMutationTransaction, TicketQuery, TicketRecord, TicketRepository } from "./ticket.types.js";
 
 const include = {
     category: { select: { id: true, code: true, name: true, supportArea: true } },
     subcategory: { select: { id: true, code: true, name: true } },
     assignee: { select: { id: true, fullName: true } },
     inventoryItem: { select: { id: true, type: true, model: true, assetCode: true } },
+} as const;
+
+const mutationInclude = {
+    category: { select: { supportArea: true } },
+    assignee: { select: { id: true, fullName: true } },
 } as const;
 
 function uniqueTarget(error: unknown): string {
@@ -98,5 +103,34 @@ export class PrismaTicketRepository implements TicketRepository {
             where: { ticketId }, include: { actor: { select: { id: true, fullName: true } } },
             orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         });
+    }
+
+    async withLockedTicket<T>(ticketId: string, operation: (tx: TicketMutationTransaction) => Promise<T>): Promise<T> {
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT "id" FROM "Ticket" WHERE "id" = ${ticketId}::uuid FOR UPDATE`;
+            const toSnapshot = (value: unknown) => value as TicketMutationSnapshot | null;
+            const unit = {
+                ticket: toSnapshot(await tx.ticket.findUnique({ where: { id: ticketId }, include: mutationInclude })),
+                findUser: async (id: string) => tx.user.findUnique({
+                    where: { id }, select: { id: true, fullName: true, role: true, supportAreas: true, isActive: true },
+                }),
+                updateTicket: async (data: Parameters<TicketMutationTransaction["updateTicket"]>[0]) => {
+                    const result = await tx.ticket.update({ where: { id: ticketId }, data, include: mutationInclude });
+                    return result as unknown as TicketMutationSnapshot;
+                },
+                createEvent: async (input: { actorId: string; type: "ASSIGNED" | "UNASSIGNED" | "STATUS_CHANGED" | "PRIORITY_CHANGED"; fromStatus?: TicketStatus | null; toStatus?: TicketStatus | null; metadata: Record<string, unknown> }) => {
+                    await tx.ticketEvent.create({ data: { ticketId, ...input } });
+                },
+                findIdempotencyRecord: async (userId: string, scope: string, key: string) => tx.idempotencyRecord.findUnique({
+                    where: { userId_scope_key: { userId, scope, key } },
+                    select: { id: true, requestHash: true, responseStatus: true, responseBody: true, expiresAt: true },
+                }),
+                deleteIdempotencyRecord: async (id: string) => { await tx.idempotencyRecord.delete({ where: { id } }); },
+                createIdempotencyRecord: async (data: Parameters<TicketMutationTransaction["createIdempotencyRecord"]>[0]) => {
+                    await tx.idempotencyRecord.create({ data });
+                },
+            };
+            return operation(unit);
+        }, { maxWait: 10000, timeout: 20000 }) as Promise<T>;
     }
 }

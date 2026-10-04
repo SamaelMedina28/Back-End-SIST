@@ -1,4 +1,4 @@
-import type { TicketPriority, TicketStatus } from "../../../generated/prisma/client.js";
+import type { Role, SupportArea, TicketPriority, TicketStatus } from "../../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 
 export interface TicketCreateInput {
@@ -26,6 +26,47 @@ export interface TicketRepository {
     list(where: Record<string, unknown>, query: TicketQuery): Promise<{ records: TicketRecord[]; total: number }>;
     findById(id: string): Promise<TicketRecord | null>;
     events(ticketId: string): Promise<TicketEventRecord[]>;
+    withLockedTicket<T>(ticketId: string, operation: (tx: TicketMutationTransaction) => Promise<T>): Promise<T>;
+}
+
+export interface TicketMutationSnapshot {
+    id: string; code: string; status: TicketStatus; priority: TicketPriority;
+    duplicateKey: string | null; completedAt: Date | null; cancelledAt: Date | null;
+    cancellationReason: string | null; assigneeId: string | null; assignedAt: Date | null;
+    updatedAt: Date; category: { supportArea: SupportArea };
+    assignee: { id: string; fullName: string } | null;
+}
+
+export interface MutationActor {
+    id: string; fullName: string; role: Role; supportAreas: SupportArea[]; isActive: boolean;
+}
+
+export interface MutationEventInput {
+    actorId: string; type: "ASSIGNED" | "UNASSIGNED" | "STATUS_CHANGED" | "PRIORITY_CHANGED";
+    fromStatus?: TicketStatus | null; toStatus?: TicketStatus | null; metadata: Record<string, unknown>;
+}
+
+export interface IdempotencyRecordValue {
+    id: string; requestHash: string; responseStatus: number; responseBody: unknown; expiresAt: Date;
+}
+
+export interface NewIdempotencyRecord {
+    userId: string; key: string; scope: string; requestHash: string;
+    responseStatus: number; responseBody: Record<string, unknown>; expiresAt: Date;
+}
+
+export interface TicketMutationTransaction {
+    ticket: TicketMutationSnapshot | null;
+    findUser(id: string): Promise<MutationActor | null>;
+    updateTicket(data: {
+        assigneeId?: string | null; assignedAt?: Date | null; status?: TicketStatus;
+        priority?: TicketPriority; duplicateKey?: string | null; completedAt?: Date | null;
+        cancelledAt?: Date | null; cancellationReason?: string | null;
+    }): Promise<TicketMutationSnapshot>;
+    createEvent(input: MutationEventInput): Promise<void>;
+    findIdempotencyRecord(userId: string, scope: string, key: string): Promise<IdempotencyRecordValue | null>;
+    deleteIdempotencyRecord(id: string): Promise<void>;
+    createIdempotencyRecord(input: NewIdempotencyRecord): Promise<void>;
 }
 
 export interface TicketRecord {
