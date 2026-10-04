@@ -1,0 +1,21 @@
+node_modules
+
+# Seguridad: Variables de entorno ocultas
+.env
+.env.local
+.env.*.local
+
+# Cliente de Prisma generado automáticamente
+/generated/prisma
+
+# Herramientas de IA y Agentes
+.claude/*
+.windsurf/*
+.agents/*
+
+# Archivos basura del Sistema Operativo
+.DS_Store
+Thumbs.db
+
+# Archivos compilados
+dist/*
