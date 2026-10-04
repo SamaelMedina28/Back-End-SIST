@@ -28,6 +28,20 @@ export function assertTestDatabaseName(url: string, actualName?: string): string
     return configured;
 }
 
+describe("Protección de base de integración", () => {
+    it("rechaza la base de desarrollo", () => {
+        expect(() => assertTestDatabaseName("postgresql://user:example@localhost/support_system")).toThrow(/_test/u);
+    });
+
+    it("rechaza una base conectada distinta de la configurada", () => {
+        expect(() => assertTestDatabaseName("postgresql://user:example@localhost/support_system_test", "support_system")).toThrow(/coincide/u);
+    });
+
+    it("admite únicamente la base de test esperada por el guard completo", () => {
+        expect(assertTestDatabaseName("postgresql://user:example@localhost/support_system_test", "support_system_test")).toBe("support_system_test");
+    });
+});
+
 describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
     let prisma: PrismaClient;
     let app: Application;

@@ -25,7 +25,7 @@
 | Support suggestions read API | DONE | 1/1 | 4 casos; sin seed ficticio |
 | Resolución de prioridad efectiva | DONE | Utilidad compartida | 3 casos; herencia y null |
 | OpenAPI / Swagger UI | DONE | 2/2 | 5 casos; schema validado y UI servida |
-| Tickets Core: POST, listado, detalle y eventos | DONE | 4/13 | 27 tests PostgreSQL reales + 4 unitarios |
+| Tickets Core: POST, listado, detalle y eventos | DONE | 4/13 | 27 tests PostgreSQL reales + 7 unitarios |
 | Prevención de duplicados | DONE | Incluido en POST | UNIQUE PostgreSQL, normalización y concurrencia |
 | Límite de 10 tickets activos | DONE | Incluido en POST | Lock del reportero, conteo y concurrencia PostgreSQL |
 | Base PostgreSQL `support_system_test` | DONE | 0 | Migración y seed reales; guard de base de pruebas |
@@ -106,7 +106,7 @@
 
 - `prisma validate`: correcto.
 - `prisma generate`: correcto; Prisma Client 7.9.1 generado.
-- `pnpm test` con `DATABASE_URL_TEST` configurada: 3 archivos y 106 pruebas aprobadas, de las cuales 27 usaron PostgreSQL real.
+- `pnpm test` con `DATABASE_URL_TEST` configurada: 3 archivos y 109 pruebas aprobadas, de las cuales 27 usaron PostgreSQL real.
 - `pnpm build`: correcto.
 - `tsc --noEmit`: correcto.
 - No existe login por contraseña ni campo `password` en `User`.
