@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 4: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 5: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -30,8 +30,8 @@
 | Límite de 10 tickets activos | DONE | Incluido en POST | Lock del reportero, conteo y concurrencia PostgreSQL |
 | Base PostgreSQL `support_system_test` | DONE | 0 | Migración y seed reales; guard de base de pruebas |
 | Timeline / eventos de ticket | DONE | 1/1 de esta etapa | CREATED, orden, actor y RBAC |
-| Autoasignación y asignación administrativa | NOT_STARTED | Incluido en tickets | 0 |
-| Estados, prioridad e idempotencia | NOT_STARTED | Incluido en tickets | 0 |
+| Autoasignación y asignación administrativa | DONE | 3/13 | PostgreSQL real: concurrencia, área, idempotencia de asignación y eventos |
+| Estados, prioridad e idempotencia | DONE | 2/13 | PostgreSQL real: permisos, transiciones, cierre, replay/conflicto y prioridad |
 | Dashboard | NOT_STARTED | 0/1 | 0 |
 | Bitácora de actividad | NOT_STARTED | 0/5 | 0 |
 | Auditoría de bitácora | NOT_STARTED | Incluido en bitácora | 0 |
@@ -66,6 +66,11 @@
 - `GET /api/v1/tickets`
 - `GET /api/v1/tickets/:id`
 - `GET /api/v1/tickets/:id/events`
+- `POST /api/v1/tickets/:id/assign-self`
+- `PUT /api/v1/tickets/:id/assignee`
+- `DELETE /api/v1/tickets/:id/assignee`
+- `PATCH /api/v1/tickets/:id/status`
+- `PATCH /api/v1/tickets/:id/priority`
 - `GET /api/v1/categories`
 - `POST /api/v1/categories`
 - `PATCH /api/v1/categories/:id`
@@ -106,9 +111,13 @@
 
 - `prisma validate`: correcto.
 - `prisma generate`: correcto; Prisma Client 7.9.1 generado.
-- `pnpm test` con `DATABASE_URL_TEST` configurada: 3 archivos y 112 pruebas aprobadas, de las cuales 30 usaron PostgreSQL real.
-- `pnpm build`: correcto.
-- `tsc --noEmit`: correcto.
+- Etapa 5 agrega migración aditiva para `IdempotencyRecord`; sin cambios destructivos al esquema previo.
+- `POST assign-self` serializa solicitudes con `SELECT ... FOR UPDATE`; asignaciones y eventos se guardan de forma atómica.
+- Los cierres COMPLETED/CANCELLED preservan el asignado, liberan `duplicateKey`, guardan timestamps y hacen terminal al ticket. La cancelación requiere nota.
+- Idempotencia persistente y multi-instancia: clave única por actor/scope/key, SHA-256 del payload y replay por 24 horas; no se agregó worker de limpieza.
+- `pnpm test` con `DATABASE_URL_TEST` configurada: pendiente de la validación final de Etapa 5.
+- `pnpm build`: pendiente de la validación final de Etapa 5.
+- `tsc --noEmit`: pendiente de la validación final de Etapa 5.
 - No existe login por contraseña ni campo `password` en `User`.
 - No existe secreto JWT predeterminado ni CORS con origen `*`.
 - Los tokens de Google no se persisten; el ID token se verifica y se descarta.
@@ -116,4 +125,4 @@
 
 ## Próxima etapa
 
-Assignment + Status Mutations continúa en `NOT_STARTED`. No se avanzó a esa etapa.
+La siguiente etapa pendiente es Dashboard. Bitácora, auditoría, inventario, miembros de soporte, reportes y worker de notificaciones continúan sin implementar.

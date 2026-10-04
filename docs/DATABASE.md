@@ -15,6 +15,7 @@ Este documento describe el modelo Prisma del Sistema Integral de Soporte Técnic
 - **ActivityLogRevision**: historial inmutable de cambios de la bitácora.
 - **InventoryItem**: equipo o accesorio inventariable. Los campos operativos son nullable porque sus requisitos dependen de `InventoryType`; la validación condicional pertenece a Zod/services.
 - **NotificationOutbox**: cola transaccional de notificaciones. Se escribe junto con el cambio de dominio y se procesa fuera de la petición HTTP.
+- **IdempotencyRecord**: respuesta persistida para operaciones HTTP idempotentes. La clave es única por usuario y scope; el hash identifica el payload y `expiresAt` limita la retención lógica a 24 horas.
 
 ## Relaciones principales
 
@@ -26,6 +27,7 @@ Este documento describe el modelo Prisma del Sistema Integral de Soporte Técnic
 - ActivityParticipant conecta ActivityLog con User sin duplicar participantes.
 - ActivityLogRevision pertenece a ActivityLog y registra quién realizó el cambio.
 - SupportSuggestion pertenece a Category y opcionalmente a Subcategory.
+- IdempotencyRecord pertenece a User y se elimina/reemplaza al volver a usar una clave expirada.
 
 Las relaciones históricas usan restricciones que impiden borrar físicamente registros referenciados. Los módulos futuros deben usar `isActive` para bajas lógicas.
 
@@ -80,6 +82,8 @@ Para miembros `SUPPORT` o `SUB_MANAGER` preaprovisionados, el flujo busca la cue
 Este flujo quedó implementado en la Etapa 2 y se cubrió con pruebas automatizadas mediante un proveedor de Google simulado. La comprobación manual contra Google real sigue pendiente de credenciales.
 
 ## PostgreSQL local
+
+La Etapa 5 añade `20261004200132_add_ticket_status_idempotency`, una migración aditiva que crea `IdempotencyRecord`, un índice por `expiresAt`, la unicidad `(userId, scope, key)` y una FK restrictiva a `User`. La aplicación ignora registros vencidos al resolver solicitudes; no hay todavía un worker de limpieza. Las claves solo se guardan para cambios de estado con `Idempotency-Key` y se retienen lógicamente por 24 horas.
 
 La validación de esta etapa utiliza el PostgreSQL local del equipo, con base `support_system` y usuario `samael`. La contraseña no se guarda en el repositorio ni en esta documentación.
 

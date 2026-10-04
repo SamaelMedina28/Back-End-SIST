@@ -352,6 +352,49 @@ export const openApiDocument = {
                 },
             }),
         },
+        "/api/v1/tickets/{id}/assign-self": {
+            post: operation({
+                summary: "Autoasignar ticket",
+                description: "SUPPORT o SUB_MANAGER se asigna un ticket activo de una de sus áreas. La operación serializa concurrencia y emite ASSIGNED una sola vez.",
+                tags: ["Tickets"], security: cookieSecurity, roles: ["SUPPORT", "SUB_MANAGER"],
+                parameters: [idParameter], requestBody: { required: false, content: json({ $ref: "#/components/schemas/EmptyObject" }) },
+                responses: { 200: successResponse("Ticket asignado.", { $ref: "#/components/schemas/TicketAssignmentResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
+        "/api/v1/tickets/{id}/assignee": {
+            put: operation({
+                summary: "Asignar o reasignar ticket",
+                description: "ADMIN asigna un ticket activo a una cuenta SUPPORT/SUB_MANAGER activa cuya área incluya la categoría. Repetir el mismo asignado no duplica el evento.",
+                tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN"], parameters: [idParameter],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/AdminAssigneeInput" }) },
+                responses: { 200: successResponse("Ticket asignado.", { $ref: "#/components/schemas/TicketAssignmentResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+            delete: operation({
+                summary: "Retirar asignación",
+                description: "ADMIN retira la asignación de un ticket activo. Si ya está sin asignar, responde 204 sin emitir evento.",
+                tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN"], parameters: [idParameter],
+                responses: { 204: { description: "Asignación retirada o ya inexistente." }, ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
+        "/api/v1/tickets/{id}/status": {
+            patch: operation({
+                summary: "Cambiar estado de ticket",
+                description: "ADMIN puede cambiar cualquier ticket; SUPPORT/SUB_MANAGER solo uno asignado a sí mismo y dentro de sus áreas. Una clave Idempotency-Key persiste la respuesta durante 24 horas.",
+                tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN", "SUPPORT", "SUB_MANAGER"],
+                parameters: [idParameter, { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string", minLength: 1, maxLength: 200 } }],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/TicketStatusInput" }) },
+                responses: { 200: successResponse("Estado actualizado o respuesta idempotente reproducida.", { $ref: "#/components/schemas/TicketStatusResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
+        "/api/v1/tickets/{id}/priority": {
+            patch: operation({
+                summary: "Cambiar prioridad de ticket",
+                description: "Solo ADMIN. Requiere una razón no vacía; los tickets terminales no se modifican y repetir la prioridad actual no emite evento.",
+                tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN"], parameters: [idParameter],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/TicketPriorityInput" }) },
+                responses: { 200: successResponse("Prioridad actualizada.", { $ref: "#/components/schemas/TicketPriorityResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
         "/api/v1/tickets/{id}/events": {
             get: operation({
                 summary: "Consultar eventos de ticket",
@@ -404,6 +447,24 @@ export const openApiDocument = {
             onboardingCookie: { type: "apiKey", in: "cookie", name: "sist_onboarding", description: "Cookie temporal de onboarding emitida por Google OAuth." },
         },
         schemas: {
+            EmptyObject: { type: "object", maxProperties: 0, additionalProperties: false },
+            AdminAssigneeInput: { type: "object", required: ["assigneeId"], additionalProperties: false, properties: { assigneeId: { type: "string", format: "uuid" } } },
+            TicketStatusInput: { type: "object", required: ["status"], additionalProperties: false, properties: {
+                status: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+                note: { type: "string", minLength: 1, maxLength: 500, description: "Obligatoria al cancelar." },
+            } },
+            TicketPriorityInput: { type: "object", required: ["priority", "reason"], additionalProperties: false, properties: {
+                priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, reason: { type: "string", minLength: 1, maxLength: 500 },
+            } },
+            TicketAssignmentResult: { type: "object", required: ["id", "code", "assignee", "assignedAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, assignee: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } }, { type: "null" }] }, assignedAt: { type: ["string", "null"], format: "date-time" },
+            } },
+            TicketStatusResult: { type: "object", required: ["id", "code", "status", "updatedAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, status: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] }, updatedAt: { type: "string", format: "date-time" },
+            } },
+            TicketPriorityResult: { type: "object", required: ["id", "code", "priority", "updatedAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, updatedAt: { type: "string", format: "date-time" },
+            } },
             StandardSuccessResponse: {
                 type: "object", required: ["success", "data"],
                 properties: { success: { const: true }, data: {} },

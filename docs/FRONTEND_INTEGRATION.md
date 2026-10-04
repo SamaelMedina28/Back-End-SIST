@@ -268,6 +268,31 @@ const detail = await api(`/tickets/${ticketId}`);
 const events = await api(`/tickets/${ticketId}/events`);
 ```
 
+## Asignación, estado y prioridad
+
+`SUPPORT`/`SUB_MANAGER` puede autoasignarse con `POST /api/v1/tickets/:id/assign-self`; `ADMIN` asigna/reasigna con `PUT /api/v1/tickets/:id/assignee` y retira asignación con `DELETE` en esa misma ruta. Solo se muestran acciones para tickets activos; el servidor vuelve a validar rol, área y estado de manera atómica.
+
+Para cambiar el estado, ofrece únicamente las transiciones válidas: `OPEN → IN_REVIEW/IN_PROGRESS`, `IN_REVIEW → IN_PROGRESS` e `IN_PROGRESS → COMPLETED`; desde cada estado activo también se puede cancelar. `CANCELLED` requiere una nota (1–500 caracteres). `SUPPORT` y `SUB_MANAGER` solo pueden cambiar tickets asignados a sí mismos en sus áreas; `ADMIN` puede hacerlo en cualquier área.
+
+Genera una clave de idempotencia por intento lógico de cambio de estado y conserva exactamente la misma clave y body ante reintentos de red. No reutilices la clave para una transición o nota distinta. El backend guarda respuestas durante 24 horas; un body distinto con la misma clave produce `409 IDEMPOTENCY_CONFLICT`.
+
+```ts
+const idempotencyKey = crypto.randomUUID();
+const response = await fetch(`${API_URL}/api/v1/tickets/${ticketId}/status`, {
+  method: "PATCH",
+  credentials: "include",
+  headers: {
+    "Content-Type": "application/json",
+    "Idempotency-Key": idempotencyKey,
+  },
+  body: JSON.stringify({ status: "IN_PROGRESS", note: "Diagnóstico iniciado" }),
+});
+const result = await response.json();
+if (!response.ok) throw new ApiError(result.error.code, result.error.message, result.error.fields);
+```
+
+`ADMIN` cambia prioridad con `PATCH /api/v1/tickets/:id/priority`, body `{ priority, reason }`; la razón es obligatoria. Los tickets `COMPLETED` y `CANCELLED` son terminales y no admiten cambios de estado, asignación ni prioridad.
+
 En el detalle, el nombre, correo y teléfono del reportero son snapshots del momento en que creó el ticket. El timeline empieza con un evento `CREATED` y llega ordenado de antiguo a nuevo.
 
 Para mostrar acciones útiles según el código de error, adapta el helper a conservar `error.code` además de `message`:

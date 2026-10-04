@@ -119,7 +119,7 @@ export class PrismaTicketRepository implements TicketRepository {
                     return result as unknown as TicketMutationSnapshot;
                 },
                 createEvent: async (input: { actorId: string; type: "ASSIGNED" | "UNASSIGNED" | "STATUS_CHANGED" | "PRIORITY_CHANGED"; fromStatus?: TicketStatus | null; toStatus?: TicketStatus | null; metadata: Record<string, unknown> }) => {
-                    await tx.ticketEvent.create({ data: { ticketId, ...input } });
+                    await tx.ticketEvent.create({ data: { ticketId, ...input, metadata: input.metadata as Prisma.InputJsonValue } });
                 },
                 findIdempotencyRecord: async (userId: string, scope: string, key: string) => tx.idempotencyRecord.findUnique({
                     where: { userId_scope_key: { userId, scope, key } },
@@ -127,7 +127,7 @@ export class PrismaTicketRepository implements TicketRepository {
                 }),
                 deleteIdempotencyRecord: async (id: string) => { await tx.idempotencyRecord.delete({ where: { id } }); },
                 createIdempotencyRecord: async (data: Parameters<TicketMutationTransaction["createIdempotencyRecord"]>[0]) => {
-                    await tx.idempotencyRecord.create({ data });
+                    await tx.idempotencyRecord.create({ data: { ...data, responseBody: data.responseBody as Prisma.InputJsonValue } });
                 },
             };
             return operation(unit);

@@ -36,7 +36,7 @@ export const ticketListQuerySchema = z.object({
 
 export const ticketIdParamsSchema = z.object({ id: uuid });
 
-export const emptyBodySchema = z.object({}).strict();
+export const emptyBodySchema = z.preprocess((value) => value === undefined ? {} : value, z.object({}).strict());
 export const adminAssigneeSchema = z.object({ assigneeId: uuid }).strict();
 export const statusMutationSchema = z.object({
     status: z.enum(TicketStatus), note: z.string().trim().min(1).max(500).optional(),

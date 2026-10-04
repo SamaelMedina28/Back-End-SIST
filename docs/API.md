@@ -240,12 +240,40 @@ Misma visibilidad que el detalle y los mismos errores `403`/`404`/`422`. Respond
 const events = await api(`/tickets/${ticketId}/events`);
 ```
 
+## Asignación y mutaciones de tickets
+
+Todas estas rutas requieren sesión. Las mutaciones persisten el cambio y su `TicketEvent` en la misma transacción; los tickets `COMPLETED` y `CANCELLED` son terminales.
+
+### `POST /api/v1/tickets/:id/assign-self`
+
+Solo `SUPPORT` y `SUB_MANAGER`. El ticket debe estar activo, sin asignar y dentro de las áreas del actor. La fila del ticket se bloquea en PostgreSQL: ante solicitudes simultáneas solo una gana (`200`); las demás reciben `409 TICKET_ALREADY_ASSIGNED`. Emite `ASSIGNED` con `assignmentType: "SELF"`.
+
+### `PUT /api/v1/tickets/:id/assignee`
+
+Solo `ADMIN`. Body estricto: `{ "assigneeId": "UUID" }`. El destino debe ser un usuario activo `SUPPORT` o `SUB_MANAGER` cuya área incluya la categoría. Permite reasignar; volver a asignar al mismo usuario es idempotente y no repite el evento. Errores relevantes: `ASSIGNEE_NOT_FOUND`, `ASSIGNEE_INACTIVE`, `INVALID_ASSIGNEE_ROLE`, `ASSIGNEE_AREA_MISMATCH`, `TICKET_NOT_ACTIVE`.
+
+### `DELETE /api/v1/tickets/:id/assignee`
+
+Solo `ADMIN`. Retira asignación y emite `UNASSIGNED`; si ya no hay asignado, responde `204` sin evento. Solo aplica a tickets activos.
+
+### `PATCH /api/v1/tickets/:id/status`
+
+`ADMIN` puede cambiar tickets de cualquier área; `SUPPORT`/`SUB_MANAGER` debe estar dentro del área y ser el asignado. Transiciones admitidas: `OPEN → IN_REVIEW`, `OPEN → IN_PROGRESS`, `IN_REVIEW → IN_PROGRESS`, `IN_PROGRESS → COMPLETED`; desde cualquiera de esos tres estados también se puede pasar a `CANCELLED`. No se permite retroceso ni modificación de estados terminales. Mismo estado no crea evento.
+
+Body estricto: `{ "status": "IN_PROGRESS", "note": "Diagnóstico iniciado" }`; `note` es opcional salvo al cancelar, donde es obligatoria (1–500 caracteres) y se guarda como `cancellationReason`. `COMPLETED` fija `completedAt`; `CANCELLED` fija `cancelledAt`; cada cierre limpia el timestamp/reason opuestos y `duplicateKey`, sin retirar al asignado. Los cambios intermedios preservan `duplicateKey`. Cada cambio real emite `STATUS_CHANGED` con from/to y metadata de la nota.
+
+El encabezado opcional `Idempotency-Key` acepta 1–200 caracteres ASCII imprimibles sin espacios. Se recomienda generar una clave por intento lógico y reutilizarla únicamente al reintentar exactamente el mismo body. El éxito completo se guarda en PostgreSQL por usuario, ruta y ticket durante 24 horas; mismo key/body reproduce la respuesta y mismo key con otro body responde `409 IDEMPOTENCY_CONFLICT`. Una transacción bloqueada serializa reintentos concurrentes y solo crea un evento.
+
+### `PATCH /api/v1/tickets/:id/priority`
+
+Solo `ADMIN`, para tickets activos. Body: `{ "priority": "HIGH", "reason": "Impacto en clase" }`; razón obligatoria, de 1 a 500 caracteres. Mismo valor no genera evento. Los cambios reales emiten `PRIORITY_CHANGED` con prioridad anterior, nueva prioridad y razón. Ticket terminal: `409 TICKET_NOT_ACTIVE`.
+
 ## Documentación interactiva
 
 - Swagger UI: `GET /api/docs`
 - OpenAPI JSON: `GET /api/openapi.json`
 
-El documento describe las rutas implementadas de auth, perfil, catálogo, categorías, subcategorías, Tickets Core y health/readiness. No publica asignaciones ni mutaciones de estado todavía.
+El documento describe las rutas implementadas de auth, perfil, catálogo, categorías, subcategorías, Tickets Core, asignación, estado, prioridad y health/readiness.
 
 ## Ejemplo del helper frontend
 

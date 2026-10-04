@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, createTicketSchema, ticketListQuerySchema } from "../src/modules/ticket/ticket.schema.js";
+import { countWords, createTicketSchema, priorityMutationSchema, statusMutationSchema, ticketListQuerySchema } from "../src/modules/ticket/ticket.schema.js";
 import { normalizeLocation, ticketDuplicateKey } from "../src/modules/ticket/ticket.service.js";
 
 describe("Ticket helpers and HTTP validation", () => {
@@ -30,5 +30,18 @@ describe("Ticket helpers and HTTP validation", () => {
         expect(createTicketSchema.safeParse({ ...valid, priority: "LOW" }).success).toBe(false);
         expect(ticketListQuerySchema.safeParse({ sort: "reporterId" }).success).toBe(false);
         expect(ticketListQuerySchema.safeParse({ pageSize: "101" }).success).toBe(false);
+    });
+
+    it("valida body estricto de estado y exige nota al cancelar", () => {
+        expect(statusMutationSchema.safeParse({ status: "IN_PROGRESS" }).success).toBe(true);
+        expect(statusMutationSchema.safeParse({ status: "CANCELLED" }).success).toBe(false);
+        expect(statusMutationSchema.safeParse({ status: "CANCELLED", note: "Ya no se requiere" }).success).toBe(true);
+        expect(statusMutationSchema.safeParse({ status: "OPEN", assigneeId: "forged" }).success).toBe(false);
+    });
+
+    it("valida prioridad y razón administrativa obligatoria", () => {
+        expect(priorityMutationSchema.safeParse({ priority: "HIGH", reason: "Impacto" }).success).toBe(true);
+        expect(priorityMutationSchema.safeParse({ priority: "HIGH", reason: " " }).success).toBe(false);
+        expect(priorityMutationSchema.safeParse({ priority: "HIGH", reason: "Impacto", status: "OPEN" }).success).toBe(false);
     });
 });

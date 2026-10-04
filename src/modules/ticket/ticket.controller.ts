@@ -23,4 +23,28 @@ export class TicketController {
     events = async (req: Request, res: Response): Promise<void> => {
         sendSuccess(res, await this.service.events(req.user as AuthenticatedUser, req.params.id as string));
     };
+
+    assignSelf = async (req: Request, res: Response): Promise<void> => {
+        sendSuccess(res, await this.service.assignSelf(req.user as AuthenticatedUser, req.params.id as string));
+    };
+
+    assignAdmin = async (req: Request, res: Response): Promise<void> => {
+        const body = req.body as { assigneeId: string };
+        sendSuccess(res, await this.service.assignAdmin(req.user as AuthenticatedUser, req.params.id as string, body.assigneeId));
+    };
+
+    unassignAdmin = async (req: Request, res: Response): Promise<void> => {
+        await this.service.unassignAdmin(req.user as AuthenticatedUser, req.params.id as string);
+        res.status(204).end();
+    };
+
+    changeStatus = async (req: Request, res: Response): Promise<void> => {
+        const body = req.body as { status: import("../../../generated/prisma/client.js").TicketStatus; note?: string };
+        res.json(await this.service.changeStatus(req.user as AuthenticatedUser, req.params.id as string, body.status, body.note, req.get("Idempotency-Key")));
+    };
+
+    changePriority = async (req: Request, res: Response): Promise<void> => {
+        const body = req.body as { priority: import("../../../generated/prisma/client.js").TicketPriority; reason: string };
+        sendSuccess(res, await this.service.changePriority(req.user as AuthenticatedUser, req.params.id as string, body.priority, body.reason));
+    };
 }

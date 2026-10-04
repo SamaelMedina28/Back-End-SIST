@@ -421,6 +421,86 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(response.body.data[1].actor).toBeNull();
     });
 
+    it("autoasignación concurrente admite un solo ganador y escribe un evento", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter);
+        const assign = () => request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support));
+        const responses = await Promise.all([assign(), assign()]);
+        expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+        expect(responses.find((response) => response.status === 409)?.body.error.code).toBe("TICKET_ALREADY_ASSIGNED");
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(1);
+        expect(await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ assigneeId: support.id });
+    });
+
+    it("ADMIN asigna, reasigna y desasigna dentro del área; el mismo asignado no duplica evento", async () => {
+        const reporter = await createTestUser();
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const otherSupport = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const wrongArea = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.SOFTWARE] });
+        const ticket = await createTestTicket(reporter);
+        const assign = (assigneeId: string) => request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin)).send({ assigneeId });
+        expect((await assign(wrongArea.id)).body.error.code).toBe("ASSIGNEE_AREA_MISMATCH");
+        expect((await assign(support.id)).status).toBe(200);
+        expect((await assign(support.id)).status).toBe(200);
+        expect((await assign(otherSupport.id)).status).toBe(200);
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(2);
+        expect((await request(app).delete(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin))).status).toBe(204);
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "UNASSIGNED" } })).toBe(1);
+        expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assignedAt).toBeNull();
+    });
+
+    it("estado respeta área, asignación, transición, cancelación y timestamps terminales", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const outside = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.SOFTWARE] });
+        const ticket = await createTestTicket(reporter);
+        const change = (user: typeof support, status: string, note?: string) => request(app).patch(`/api/v1/tickets/${ticket.id}/status`)
+            .set("Cookie", cookie(user)).send({ status, ...(note ? { note } : {}) });
+        expect((await change(support, "IN_REVIEW")).body.error.code).toBe("TICKET_NOT_ASSIGNED_TO_YOU");
+        await request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support));
+        expect((await change(outside, "IN_REVIEW")).body.error.code).toBe("SUPPORT_AREA_FORBIDDEN");
+        expect((await change(support, "COMPLETED")).body.error.code).toBe("INVALID_STATUS_TRANSITION");
+        expect((await change(support, "IN_REVIEW")).status).toBe(200);
+        expect((await change(support, "IN_PROGRESS")).status).toBe(200);
+        expect((await change(support, "CANCELLED")).status).toBe(422);
+        expect((await change(support, "CANCELLED", "Requiere otra pieza")).status).toBe(200);
+        const closed = await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+        expect(closed).toMatchObject({ status: TicketStatus.CANCELLED, cancellationReason: "Requiere otra pieza", completedAt: null, duplicateKey: null, assigneeId: support.id });
+        expect(closed.cancelledAt).toBeInstanceOf(Date);
+        expect((await change(support, "IN_PROGRESS")).body.error.code).toBe("TICKET_NOT_ACTIVE");
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "STATUS_CHANGED" } })).toBe(3);
+    });
+
+    it("Idempotency-Key reproduce el éxito y una clave concurrente crea un solo evento", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter);
+        await request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support));
+        const change = (status: string) => request(app).patch(`/api/v1/tickets/${ticket.id}/status`)
+            .set("Cookie", cookie(support)).set("Idempotency-Key", "stage5-in-review").send({ status });
+        const parallel = await Promise.all([change("IN_REVIEW"), change("IN_REVIEW")]);
+        expect(parallel.map((response) => response.status)).toEqual([200, 200]);
+        expect(parallel[0]?.body).toEqual(parallel[1]?.body);
+        expect((await change("IN_PROGRESS")).body.error.code).toBe("IDEMPOTENCY_CONFLICT");
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "STATUS_CHANGED" } })).toBe(1);
+        expect(await prisma.idempotencyRecord.count({ where: { userId: support.id } })).toBe(1);
+    });
+
+    it("ADMIN cambia prioridad con razón, rechaza terminales y evita eventos redundantes", async () => {
+        const reporter = await createTestUser();
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const ticket = await createTestTicket(reporter);
+        const change = (priority: string, reason = "Impacto en clase") => request(app).patch(`/api/v1/tickets/${ticket.id}/priority`)
+            .set("Cookie", cookie(admin)).send({ priority, reason });
+        expect((await change("HIGH")).status).toBe(200);
+        expect((await change("HIGH")).status).toBe(200);
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "PRIORITY_CHANGED" } })).toBe(1);
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.COMPLETED, completedAt: new Date(), duplicateKey: null } });
+        expect((await change("LOW")).body.error.code).toBe("TICKET_NOT_ACTIVE");
+    });
+
     it("Ticket se revierte cuando falla la inserción del evento CREATED", async () => {
         const user = await createTestUser();
         if (!safe) throw new Error("La base de test no fue verificada.");

@@ -2016,6 +2016,10 @@ Zod:
 Prisma:
 - capa de persistencia.
 
+### Aclaración de implementación — Etapa 5 (2026-10-04)
+
+El contrato permite cancelación según permisos definidos por backend, pero no establece matriz de transición ni condición de propiedad/asignación para cambios de estado. Para esta etapa se adopta la siguiente política de implementación: `ADMIN` puede cambiar tickets de cualquier área; `SUPPORT` y `SUB_MANAGER` solo pueden cambiar tickets activos asignados a sí mismos y pertenecientes a una de sus áreas. Se permiten exactamente las transiciones `OPEN → IN_REVIEW`, `OPEN → IN_PROGRESS`, `IN_REVIEW → IN_PROGRESS`, `IN_PROGRESS → COMPLETED`, y de cualquiera de los estados activos `OPEN`, `IN_REVIEW`, `IN_PROGRESS` a `CANCELLED`. Los terminales no cambian. Cancelar requiere una nota. Esta aclaración concreta el permiso pendiente sin cambiar nombres, formatos ni campos normativos de los endpoints anteriores.
+
 No usar any salvo que sea absolutamente necesario.
 
 Utilizar TypeScript strict.
@@ -2094,4 +2098,3 @@ Estas observaciones son parte del diagnóstico de esta etapa; deben resolverse e
 - El contrato permite “cancelación según permisos definidos por backend” para estados de ticket, pero no fija una matriz exacta por rol. Debe definirse antes de implementar esa transición.
 - El contrato indica `duplicateKey` nullable y UNIQUE, pero no especifica la estrategia de índice para permitir múltiples valores NULL y garantizar unicidad solo en tickets activos; debe resolverse mediante una restricción/índice compatible con PostgreSQL.
 - El contrato exige una colección inicial de categorías, pero no fija si se cargará mediante seed, migración o bootstrap. Debe decidirse antes de preparar datos iniciales.
-

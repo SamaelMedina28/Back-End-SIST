@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { Role } from "../../../generated/prisma/client.js";
+import { Role, TicketPriority, TicketStatus, type SupportArea } from "../../../generated/prisma/client.js";
 import { AppError } from "../../common/errors/app-error.js";
-import type { AuthenticatedUser } from "../../types/auth.js";
 import { resolveEffectivePriority } from "../category/category.service.js";
 import type { CatalogRepository } from "../category/category.types.js";
-import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository } from "./ticket.types.js";
+import type { AuthenticatedUser } from "../../types/auth.js";
+import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository, TicketMutationSnapshot, MutationActor } from "./ticket.types.js";
 
 export function normalizeLocation(value: string | null | undefined): string | null {
     return value == null ? null : value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ") || null;
@@ -22,6 +22,53 @@ const smallCategory = (value: TicketRecord["category"]) => ({ id: value.id, code
 const smallSubcategory = (value: TicketRecord["subcategory"]) => value ? ({ id: value.id, code: value.code, name: value.name }) : null;
 const assignee = (value: TicketRecord["assignee"]) => value ? ({ id: value.id, fullName: value.fullName }) : null;
 const location = (value: TicketRecord) => ({ building: value.building, room: value.room });
+const ACTIVE_STATUSES: TicketStatus[] = [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS];
+const transitions: Record<TicketStatus, TicketStatus[]> = {
+    OPEN: [TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS, TicketStatus.CANCELLED],
+    IN_REVIEW: [TicketStatus.IN_PROGRESS, TicketStatus.CANCELLED],
+    IN_PROGRESS: [TicketStatus.COMPLETED, TicketStatus.CANCELLED],
+    COMPLETED: [], CANCELLED: [],
+};
+const fail = (status: number, code: string, message: string): never => { throw new AppError(status, code, message); };
+const requireActor = (actor: MutationActor | null): MutationActor => {
+    if (!actor || !actor.isActive) return fail(401, "INVALID_SESSION", "La sesión no es válida.");
+    return actor;
+};
+const responseEnvelope = (data: Record<string, unknown>) => ({ success: true as const, data });
+
+function validateIdempotencyKey(key: string | undefined): void {
+    if (key !== undefined && !/^[\x21-\x7e]{1,200}$/u.test(key)) {
+        throw new AppError(422, "VALIDATION_ERROR", "El encabezado Idempotency-Key no es válido.", { "Idempotency-Key": ["Debe contener entre 1 y 200 caracteres ASCII imprimibles sin espacios."] });
+    }
+}
+
+function requireAdmin(actor: MutationActor): void {
+    if (actor.role !== Role.ADMIN) fail(403, "FORBIDDEN", "Solo administración puede realizar esta acción.");
+}
+
+function requireSupport(actor: MutationActor): void {
+    if (actor.role !== Role.SUPPORT && actor.role !== Role.SUB_MANAGER) fail(403, "FORBIDDEN", "Se requiere un rol de soporte.");
+}
+
+function supportAreaIncludes(actor: MutationActor, area: SupportArea): boolean {
+    return actor.role === Role.ADMIN || actor.supportAreas.includes(area);
+}
+
+function statusHash(ticketId: string, status: TicketStatus, note: string | undefined): string {
+    return createHash("sha256").update(JSON.stringify([ticketId, status, note ?? null])).digest("hex");
+}
+
+function statusData(ticket: TicketMutationSnapshot) {
+    return { id: ticket.id, code: ticket.code, status: ticket.status, updatedAt: ticket.updatedAt.toISOString() };
+}
+
+function assignmentData(ticket: TicketMutationSnapshot) {
+    return { id: ticket.id, code: ticket.code, assignee: ticket.assignee, assignedAt: ticket.assignedAt?.toISOString() ?? null };
+}
+
+function assertActive(ticket: TicketMutationSnapshot): void {
+    if (!ACTIVE_STATUSES.includes(ticket.status)) fail(409, "TICKET_NOT_ACTIVE", "No se puede modificar un ticket que ya terminó.");
+}
 
 export function toCreatedTicket(ticket: TicketRecord) {
     return {
@@ -179,5 +226,117 @@ export class TicketService {
     async events(user: AuthenticatedUser, id: string) {
         await this.visibleTicket(user, id);
         return (await this.tickets.events(id)).map(toTicketEvent);
+    }
+
+    async assignSelf(user: AuthenticatedUser, id: string) {
+        return this.tickets.withLockedTicket(id, async (tx) => {
+            const ticket = tx.ticket;
+            if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+            assertActive(ticket);
+            const actor = requireActor(await tx.findUser(user.id));
+            requireSupport(actor);
+            if (!supportAreaIncludes(actor, ticket.category.supportArea)) fail(403, "SUPPORT_AREA_FORBIDDEN", "El ticket está fuera de tus áreas de soporte.");
+            if (ticket.assigneeId) fail(409, "TICKET_ALREADY_ASSIGNED", "El ticket ya tiene una persona asignada.");
+            const now = new Date();
+            const updated = await tx.updateTicket({ assigneeId: actor.id, assignedAt: now });
+            await tx.createEvent({ actorId: actor.id, type: "ASSIGNED", metadata: { assigneeId: actor.id, assignmentType: "SELF" } });
+            return assignmentData(updated);
+        });
+    }
+
+    async assignAdmin(user: AuthenticatedUser, id: string, assigneeId: string) {
+        return this.tickets.withLockedTicket(id, async (tx) => {
+            const ticket = tx.ticket;
+            if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+            const actor = requireActor(await tx.findUser(user.id));
+            requireAdmin(actor);
+            assertActive(ticket);
+            const target = await tx.findUser(assigneeId);
+            if (!target) throw new AppError(404, "ASSIGNEE_NOT_FOUND", "La persona asignada no existe.");
+            if (!target.isActive) fail(409, "ASSIGNEE_INACTIVE", "La persona asignada está inactiva.");
+            if (target.role !== Role.SUPPORT && target.role !== Role.SUB_MANAGER) fail(409, "INVALID_ASSIGNEE_ROLE", "La persona debe tener un rol de soporte.");
+            if (!target.supportAreas.includes(ticket.category.supportArea)) fail(409, "ASSIGNEE_AREA_MISMATCH", "La persona no pertenece al área de soporte del ticket.");
+            if (ticket.assigneeId === target.id) return assignmentData(ticket);
+            const updated = await tx.updateTicket({ assigneeId: target.id, assignedAt: new Date() });
+            await tx.createEvent({ actorId: actor.id, type: "ASSIGNED", metadata: {
+                assignmentType: "ADMIN", previousAssigneeId: ticket.assigneeId, assigneeId: target.id,
+            } });
+            return assignmentData(updated);
+        });
+    }
+
+    async unassignAdmin(user: AuthenticatedUser, id: string): Promise<void> {
+        await this.tickets.withLockedTicket(id, async (tx) => {
+            const ticket = tx.ticket;
+            if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+            const actor = requireActor(await tx.findUser(user.id));
+            requireAdmin(actor);
+            assertActive(ticket);
+            if (!ticket.assigneeId) return;
+            await tx.updateTicket({ assigneeId: null, assignedAt: null });
+            await tx.createEvent({ actorId: actor.id, type: "UNASSIGNED", metadata: { previousAssigneeId: ticket.assigneeId } });
+        });
+    }
+
+    async changeStatus(user: AuthenticatedUser, id: string, status: TicketStatus, note: string | undefined, key: string | undefined) {
+        validateIdempotencyKey(key);
+        return this.tickets.withLockedTicket(id, async (tx) => {
+            const ticket = tx.ticket;
+            if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+            const actor = requireActor(await tx.findUser(user.id));
+            if (actor.role !== Role.ADMIN && actor.role !== Role.SUPPORT && actor.role !== Role.SUB_MANAGER) fail(403, "FORBIDDEN", "No tienes permisos para cambiar el estado.");
+            if (!supportAreaIncludes(actor, ticket.category.supportArea)) fail(403, "SUPPORT_AREA_FORBIDDEN", "El ticket está fuera de tus áreas de soporte.");
+            if (actor.role !== Role.ADMIN && ticket.assigneeId !== actor.id) fail(403, "TICKET_NOT_ASSIGNED_TO_YOU", "Solo puedes cambiar el estado de tickets asignados a ti.");
+
+            const scope = `PATCH:/tickets/${id}/status`;
+            const hash = statusHash(id, status, note);
+            if (key) {
+                const previous = await tx.findIdempotencyRecord(actor.id, scope, key);
+                if (previous && previous.expiresAt > new Date()) {
+                    if (previous.requestHash !== hash) fail(409, "IDEMPOTENCY_CONFLICT", "La clave ya se utilizó con una solicitud diferente.");
+                    return previous.responseBody;
+                }
+                if (previous) await tx.deleteIdempotencyRecord(previous.id);
+            }
+
+            assertActive(ticket);
+            if (status !== ticket.status && !transitions[ticket.status].includes(status)) {
+                fail(409, "INVALID_STATUS_TRANSITION", "La transición de estado solicitada no está permitida.");
+            }
+            let result: Record<string, unknown>;
+            if (status === ticket.status) result = statusData(ticket);
+            else {
+                const now = new Date();
+                const data = status === TicketStatus.COMPLETED
+                    ? { status, completedAt: now, cancelledAt: null, cancellationReason: null, duplicateKey: null }
+                    : status === TicketStatus.CANCELLED
+                        ? { status, cancelledAt: now, cancellationReason: note!, completedAt: null, duplicateKey: null }
+                        : { status, completedAt: null, cancelledAt: null, cancellationReason: null };
+                const updated = await tx.updateTicket(data);
+                await tx.createEvent({ actorId: actor.id, type: "STATUS_CHANGED", fromStatus: ticket.status, toStatus: status,
+                    metadata: note ? (status === TicketStatus.CANCELLED ? { note, cancellationReason: note } : { note }) : {} });
+                result = statusData(updated);
+            }
+            const envelope = responseEnvelope(result);
+            if (key) await tx.createIdempotencyRecord({
+                userId: actor.id, key, scope, requestHash: hash, responseStatus: 200, responseBody: envelope,
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            });
+            return envelope;
+        });
+    }
+
+    async changePriority(user: AuthenticatedUser, id: string, priority: TicketPriority, reason: string) {
+        return this.tickets.withLockedTicket(id, async (tx) => {
+            const ticket = tx.ticket;
+            if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+            const actor = requireActor(await tx.findUser(user.id));
+            requireAdmin(actor);
+            assertActive(ticket);
+            if (priority === ticket.priority) return { id: ticket.id, code: ticket.code, priority: ticket.priority, updatedAt: ticket.updatedAt.toISOString() };
+            const updated = await tx.updateTicket({ priority });
+            await tx.createEvent({ actorId: actor.id, type: "PRIORITY_CHANGED", metadata: { previousPriority: ticket.priority, priority, reason } });
+            return { id: updated.id, code: updated.code, priority: updated.priority, updatedAt: updated.updatedAt.toISOString() };
+        });
     }
 }
