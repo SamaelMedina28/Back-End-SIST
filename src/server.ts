@@ -1,8 +1,37 @@
 import "dotenv/config";
-import app from "./app.js";
+import { createPrismaClient } from "../lib/prisma.js";
+import { createApp } from "./app.js";
+import { loadConfig } from "./config/env.js";
+import { logger } from "./common/logger.js";
+import { GoogleOAuthProvider } from "./modules/auth/google.provider.js";
+import { PrismaUserRepository } from "./modules/auth/user.repository.js";
 
-const PORT = process.env.PORT || 3000;
+const config = loadConfig();
+const prisma = createPrismaClient(config.databaseUrl);
+const users = new PrismaUserRepository(prisma);
+const google = new GoogleOAuthProvider(config);
 
-app.listen(PORT, () => {
-    console.log(`Servidor Express ejecutándose en http://localhost:${PORT}`);
+const app = createApp({
+    config,
+    users,
+    google,
+    checkDatabase: async () => {
+        await prisma.$queryRaw`SELECT 1`;
+    },
 });
+
+const server = app.listen(config.port, () => {
+    logger.info({ port: config.port }, "Express server started");
+});
+
+async function shutdown(signal: string): Promise<void> {
+    logger.info({ signal }, "Shutting down");
+    server.close(async () => {
+        await prisma.$disconnect();
+        process.exit(0);
+    });
+}
+
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+

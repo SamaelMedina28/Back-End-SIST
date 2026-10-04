@@ -65,9 +65,9 @@ Una baja lógica establece `isActive = false` en lugar de eliminar la fila. Se u
 
 Las relaciones críticas usan `Restrict`; no se configuraron cascadas destructivas para datos históricos. Las futuras rutas de “eliminación” deben implementar soft delete.
 
-## Onboarding OAuth futuro
+## Onboarding OAuth
 
-`User.institutionalId` permanece obligatorio y unique. Para una identidad de Google que todavía no existe en la base de datos, el callback futuro no creará un `User` incompleto:
+`User.institutionalId` permanece obligatorio y unique. Para una identidad de Google que todavía no existe en la base de datos, el callback no crea un `User` incompleto:
 
 1. Validará la identidad, el dominio y `email_verified`.
 2. Guardará un estado temporal de onboarding seguro.
@@ -75,9 +75,9 @@ Las relaciones críticas usan `Restrict`; no se configuraron cascadas destructiv
 4. Recibirá `institutionalId`, `communityType` y `phone` opcional.
 5. Creará el `User` con todos sus campos obligatorios y `role = USER`.
 
-Para miembros `SUPPORT` o `SUB_MANAGER` pre-provisionados, el flujo futuro buscará la cuenta por email y vinculará `googleSubject` sin crear un registro nuevo.
+Para miembros `SUPPORT` o `SUB_MANAGER` preaprovisionados, el flujo busca la cuenta por email y vincula `googleSubject` sin crear un registro nuevo ni modificar su rol, áreas o habilidades.
 
-Este flujo todavía no está implementado.
+Este flujo quedó implementado en la Etapa 2 y se cubrió con pruebas automatizadas mediante un proveedor de Google simulado. La comprobación manual contra Google real sigue pendiente de credenciales.
 
 ## PostgreSQL local
 

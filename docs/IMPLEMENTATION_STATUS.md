@@ -1,17 +1,24 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 1.5: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 2: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
-| Modelo de datos Prisma 7 | DONE | 0 | 0 |
-| Migración inicial del sistema | DONE (aplicada localmente) | 0 | 0 |
-| Seed idempotente de categorías | DONE (probado dos veces) | 0 | 0 |
-| PostgreSQL local reproducible | DONE (PostgreSQL local) | 0 | 0 |
-| Documentación de base de datos | DONE | 0 | 0 |
-| Base de API, respuestas y errores | NOT_STARTED | 0/4 fuera de /api/v1 | 0 |
-| Autenticación Google OAuth y sesión | NOT_STARTED | 0/5 | 0 |
-| Usuarios y perfil propio | NOT_STARTED | 0/1 | 0 |
+| Modelo de datos Prisma 7 | DONE | 0 | Incluido en validación Prisma |
+| Migración inicial del sistema | DONE (aplicada localmente) | 0 | Verificado en Etapa 1.5 |
+| Seed idempotente de categorías | DONE (probado dos veces) | 0 | Verificado en Etapa 1.5 |
+| PostgreSQL local reproducible | DONE (PostgreSQL local) | 0 | Verificado en Etapa 1.5 |
+| Documentación de base de datos | DONE | 0 | N/A |
+| Infraestructura HTTP común | DONE | 2 fuera de `/api/v1` | 5 de health/error/rate limit |
+| Google OAuth | DONE / MOCKS | 2/2 | 10 de OAuth/identidad |
+| Integración contra Google real | PENDING | N/A | Pendiente de credenciales reales |
+| Sesión propia HTTP-only | DONE | 2/2 | 7 de sesión/logout + cookies |
+| Onboarding | DONE | 1/1 | 7 de complete-profile |
+| RBAC | DONE | Transversal | 5 de roles/áreas |
+| Usuarios y perfil propio | DONE | 1/1 | 5 de perfil |
+| Health/readiness | DONE | 2/2 | 3 de disponibilidad |
+| Seguridad (Helmet, CORS, rate limit, Zod) | DONE | Transversal | Cubierto por integración |
+| Logging estructurado y request ID | DONE | Transversal | Cubierto por respuestas de error |
 | Catálogo de categorías y subcategorías | NOT_STARTED | 0/8 | 0 |
 | Tickets y creación | NOT_STARTED | 0/13 | 0 |
 | Timeline / eventos de ticket | NOT_STARTED | Incluido en tickets | 0 |
@@ -24,44 +31,53 @@
 | Miembros de soporte | NOT_STARTED | 0/5 | 0 |
 | Reportes | NOT_STARTED | 0/1 | 0 |
 | Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
-| Health/readiness | NOT_STARTED | 0/2 | 0 |
 | OpenAPI / Swagger UI | NOT_STARTED | 0/2 | 0 |
-| Seguridad (Helmet, CORS, rate limit, Zod, RBAC) | NOT_STARTED | Transversal | 0 |
-| Logging estructurado | NOT_STARTED | Transversal | 0 |
 
-## Reutilización y cambios del template
+## Etapa 2 implementada
 
-- Se conservan `cli/`, sus plantillas/utilidades y la configuración de TypeScript, pnpm, Express y Prisma 7.
-- Se conserva `lib/prisma.ts` como punto de inicialización con `@prisma/adapter-pg` y el cliente en `generated/prisma`.
-- Se conserva `prisma.config.ts`, ahora con el seed registrado.
-- Se creó `docker-compose.yml` con PostgreSQL 18.6, volumen persistente y healthcheck.
-- La validación real de esta etapa utilizó PostgreSQL local, no Docker Compose.
-- Se conserva la convención modular de `src/modules/` para etapas HTTP futuras.
-- Se eliminó el modelo demo `Producto` y se reemplazó el schema completo por el dominio del sistema.
-- Se retiró el código HTTP de autenticación local y CRUD de usuarios del template porque dependía de `password`, entero autoincremental y endpoints fuera del contrato. Esto no implementa OAuth ni nuevos endpoints.
-- Se retiró el middleware de autenticación demo que usaba `default_secret`; el middleware OAuth/RBAC queda pendiente.
-- Se reorganizó el historial de migraciones porque las cinco migraciones previas eran exclusivamente del template y chocaban con el nuevo `User`. La migración real es `20261003120000_init_support_system`.
+- Express se compone mediante factories inyectables para que los tests no necesiten Google ni PostgreSQL reales.
+- La configuración se valida con Zod al iniciar. No existe fallback para `JWT_SECRET`.
+- Se habilitaron Helmet, CORS restringido a `FRONTEND_URL`, cookies, JSON/urlencoded, rate limit para OAuth/onboarding, request ID y logging estructurado con Pino.
+- El flujo OAuth usa `google-auth-library`, scopes mínimos (`openid`, `email`, `profile`), `state` criptográfico y PKCE S256. No solicita acceso offline ni conserva tokens de Google.
+- Las cuentas existentes se localizan por `googleSubject`; las cuentas preaprovisionadas se vinculan por email sin modificar su rol, áreas o habilidades.
+- Una identidad nueva no crea un `User` en el callback. Recibe un JWT temporal de onboarding en cookie HTTP-only y el usuario se crea únicamente al completar los campos obligatorios.
+- La sesión definitiva usa un JWT propio en cookie HTTP-only. Cada petición protegida vuelve a consultar al usuario y comprueba `isActive`, rol y áreas actuales.
+- `PATCH /api/v1/users/me` aplica una lista explícita de campos permitidos: `fullName` y `phone`.
+- Los errores tienen formato uniforme y no exponen stacks ni mensajes crudos de Prisma, Google o JWT.
+
+## Endpoints disponibles
+
+- `GET /api/v1/auth/google`
+- `GET /api/v1/auth/google/callback`
+- `POST /api/v1/auth/complete-profile`
+- `GET /api/v1/auth/me`
+- `POST /api/v1/auth/logout`
+- `PATCH /api/v1/users/me`
+- `GET /health`
+- `GET /ready`
 
 ## Decisiones y discrepancias documentadas
 
-- `Category.defaultPriority` es nullable: el contrato marca varias categorías como configurables y no proporciona una prioridad. El seed conserva `NULL` en esos casos.
-- `Subcategory.priority` es nullable para permitir heredar la prioridad de la categoría.
-- `User.institutionalId` es obligatorio y único, conforme al contrato. El flujo de onboarding OAuth deberá resolver la creación/vinculación de usuarios antes de persistir un User incompleto.
-- Para un usuario nuevo, el futuro callback de Google validará la identidad y conservará un estado temporal seguro; no creará `User` hasta `complete-profile`, donde llegarán `institutionalId`, `communityType` y `phone` opcional. Los miembros SUPPORT/SUB_MANAGER pre-provisionados se vincularán por email.
-- La base local `support_system` pertenece a `samael`; la contraseña no se guarda ni se documenta.
-- Las relaciones históricas usan `Restrict`; no hay cascadas destructivas. Las bajas futuras usarán `isActive`.
-- `Ticket.number` es un entero autoincremental único y `Ticket.code` queda preparado como único; la generación de `code` pertenece al service futuro.
-- Los índices de Ticket cubren filtros individuales y combinaciones previstas para listados grandes.
-- Los índices UNIQUE nullable de PostgreSQL permiten múltiples NULL para `duplicateKey`, `dedupeKey`, `assetCode`, `serialNumber` y `googleSubject`; la lógica de uso queda para etapas posteriores.
-- No se agregaron usuarios reales ni datos personales al seed.
-- No se implementaron controladores, OAuth, servicios de tickets, bitácora, inventario, lógica HTTP, dashboard, reportes, SMTP, worker ni Swagger.
+- `Category.defaultPriority` y `Subcategory.priority` siguen siendo nullable por las prioridades configurables/heredables del contrato.
+- `User.institutionalId` permanece obligatorio: el callback no persiste usuarios incompletos y delega la creación al onboarding.
+- `sameSite` queda en `lax`, adecuado para el redirect OAuth de nivel superior. `secure` se habilita en producción.
+- La cookie temporal de OAuth se elimina antes de procesar el callback, de modo que el navegador no la conserva para una reutilización normal. No se añadió Redis ni otra persistencia de challenges porque esta etapa permite explícitamente una cookie HTTP-only temporal.
+- La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
+- No se implementó OpenAPI en esta etapa porque no existía una estructura previa reutilizable y el alcance lo declaró opcional.
+- No se implementaron endpoints de categorías, tickets, bitácora, inventario, dashboard, reportes, SMTP ni worker de notificaciones.
 
 ## Verificación
 
-- No se encontraron imports ni referencias de runtime a los modelos demo eliminados.
-- `pnpm build` finaliza correctamente después de `prisma generate`.
-- `docker compose config` es válido, pero no se utilizó Docker para esta validación.
-- Se corrigió la invocación del seed a `node --import tsx prisma/seed.ts`; así se elimina la restricción IPC del binario CLI `tsx`.
-- La migración quedó aplicada y `prisma migrate status` reportó el esquema actualizado.
-- El seed produjo 10 categorías y 14 subcategorías en la primera ejecución; la segunda mantuvo exactamente esos conteos.
-- La consulta real con Prisma recuperó `PROJECTOR_FAILURE` y la subcategoría `BLURRY_IMAGE`.
+- `prisma validate`: correcto.
+- `prisma generate`: correcto; Prisma Client 7.9.1 generado.
+- `pnpm test`: 1 archivo y 38 pruebas aprobadas.
+- `pnpm build`: correcto.
+- `tsc --noEmit`: correcto.
+- No existe login por contraseña ni campo `password` en `User`.
+- No existe secreto JWT predeterminado ni CORS con origen `*`.
+- Los tokens de Google no se persisten; el ID token se verifica y se descarta.
+- Los stacks se registran internamente para errores inesperados y no se serializan al cliente.
+
+## Próxima etapa
+
+La API de Categories/Catalog continúa en `NOT_STARTED`. No se avanzó a esa etapa.

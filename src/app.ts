@@ -1,25 +1,49 @@
 import express, { type Application } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import apiRouter from "./routes/index.js";
+import helmet from "helmet";
+import type { AppConfig } from "./config/env.js";
+import { errorMiddleware, notFoundMiddleware } from "./middlewares/error.middleware.js";
+import { requestIdMiddleware } from "./middlewares/request-id.middleware.js";
+import { requestLoggerMiddleware } from "./middlewares/request-logger.middleware.js";
+import type { GoogleIdentityProvider, UserRepository } from "./modules/auth/auth.types.js";
+import { HealthController } from "./modules/health/health.controller.js";
+import { createApiRouter } from "./routes/index.js";
 
-const app: Application = express();
+export interface AppDependencies {
+    config: AppConfig;
+    users: UserRepository;
+    google: GoogleIdentityProvider;
+    checkDatabase: () => Promise<void>;
+}
 
-// Middlewares globales
-app.use(cors({
-    origin: process.env.NODE_ENV === "production" ? process.env.FRONTEND_URL : "*",
-    credentials: true,
-}));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
+export function createApp(dependencies: AppDependencies): Application {
+    const app = express();
+    const health = new HealthController(dependencies.checkDatabase);
 
-// Montaje de las rutas principales (ej: http://localhost:3000/api/users)
-app.use("/api", apiRouter);
+    app.disable("x-powered-by");
+    app.use(requestIdMiddleware);
+    app.use(requestLoggerMiddleware);
+    app.use(helmet());
+    app.use(cors({
+        origin: dependencies.config.frontendUrl,
+        credentials: true,
+    }));
+    app.use(express.json({ limit: "1mb" }));
+    app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+    app.use(cookieParser());
 
-// Manejo básico de rutas no encontradas (404)
-app.use((req, res) => {
-    res.status(404).json({ message: "Route not found" });
-});
+    app.get("/health", health.health);
+    app.get("/ready", health.ready);
+    app.use("/api/v1", createApiRouter({
+        config: dependencies.config,
+        users: dependencies.users,
+        google: dependencies.google,
+    }));
 
-export default app;
+    app.use(notFoundMiddleware);
+    app.use(errorMiddleware);
+
+    return app;
+}
+

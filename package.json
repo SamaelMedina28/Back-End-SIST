@@ -9,6 +9,7 @@
     "scripts": {
         "dev": "tsx watch src/server.ts",
         "build": "tsc",
+        "test": "vitest run",
         "build:cli": "tsc && pnpm link -g .",
         "start": "node dist/src/server.js",
         "vane": "node ./dist/cli/vane.js"
@@ -34,23 +35,29 @@
         "@types/jsonwebtoken": "^9.0.10",
         "@types/node": "^26.1.2",
         "@types/pg": "^8.20.4",
+        "@types/supertest": "^7.2.1",
         "eslint": "^10.8.0",
         "prisma": "^7.9.1",
+        "supertest": "^7.3.1",
         "tsx": "^4.23.7",
-        "typescript": "^7.0.2"
+        "typescript": "^7.0.2",
+        "vitest": "^5.0.3"
     },
     "dependencies": {
         "@prisma/adapter-pg": "^7.9.1",
         "@prisma/client": "^7.9.1",
-        "bcryptjs": "^3.0.3",
         "cookie-parser": "^1.4.7",
         "cors": "^2.8.6",
         "dotenv": "^17.4.2",
         "express": "^5.2.1",
+        "express-rate-limit": "^8.7.0",
         "figlet": "^1.11.4",
+        "google-auth-library": "^11.1.0",
+        "helmet": "^8.3.0",
         "jsonwebtoken": "^9.0.3",
         "pg": "^8.22.0",
         "picocolors": "^1.1.1",
+        "pino": "^10.4.0",
         "zod": "^4.4.3"
     }
 }
