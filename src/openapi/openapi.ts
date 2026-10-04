@@ -73,6 +73,7 @@ export const openApiDocument = {
         { name: "Subcategories" },
         { name: "Tickets" },
         { name: "Activity Log" },
+        { name: "Inventory" },
         { name: "System" },
     ],
     paths: {
@@ -458,6 +459,68 @@ export const openApiDocument = {
                 responses: { 200: successResponse("Historial inmutable de cambios.", { type: "array", items: { $ref: "#/components/schemas/ActivityLogRevision" } }), ...errorResponses([401, 403, 404, 422]) },
             }),
         },
+        "/api/v1/inventory": {
+            get: operation({
+                summary: "Listar inventario",
+                description: "SUB_MANAGER y ADMIN. Por defecto solo activos; búsqueda case-insensitive en modelo, código patrimonial, serie y ubicación. Orden createdAt DESC, id ASC.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"],
+                parameters: [
+                    { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+                    { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+                    { name: "search", in: "query", schema: { type: "string", minLength: 1 } },
+                    { name: "type", in: "query", schema: { type: "string", enum: ["COMPUTER", "PROJECTOR", "CONTROL", "ADAPTER"] } },
+                    { name: "building", in: "query", schema: { type: "string", minLength: 1 } },
+                    { name: "active", in: "query", schema: { type: "string", enum: ["true", "false"], default: "true" } },
+                ],
+                responses: { 200: { description: "Página de artículos.", content: json({ $ref: "#/components/schemas/PaginatedInventoryResponse" }) }, ...errorResponses([401, 403, 422]) },
+            }),
+            post: operation({
+                summary: "Crear artículo de inventario",
+                description: "SUB_MANAGER y ADMIN. El body es estricto y la validación depende de InventoryType; no acepta id, isActive ni timestamps.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/CreateInventoryRequest" }, {
+                    type: "COMPUTER", model: "Dell OptiPlex 7090", assetCode: "PAT-00421", color: "Negro", size: "SFF",
+                    building: "Edificio 6", room: "603", serialNumber: "DX92K1", quantity: 1, notes: null,
+                }) },
+                responses: { 201: successResponse("Artículo creado.", { $ref: "#/components/schemas/InventoryItem" }), ...errorResponses([401, 403, 409, 422]) },
+            }),
+        },
+        "/api/v1/inventory/{id}": {
+            get: operation({
+                summary: "Consultar artículo de inventario",
+                description: "Devuelve el detalle incluso si el artículo está inactivo.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                responses: { 200: successResponse("Detalle del artículo.", { $ref: "#/components/schemas/InventoryItem" }), ...errorResponses([401, 403, 404, 422]) },
+            }),
+            patch: operation({
+                summary: "Actualizar artículo de inventario",
+                description: "PATCH parcial; type es inmutable, isActive no es editable. Se valida el registro final bajo bloqueo de fila; un PATCH sin cambios devuelve 200 sin escribir.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/PatchInventoryRequest" }, { room: "604", notes: "Reubicado" }) },
+                responses: { 200: successResponse("Artículo actualizado.", { $ref: "#/components/schemas/InventoryItem" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+            delete: operation({
+                summary: "Desactivar artículo de inventario",
+                description: "Soft delete idempotente. Conserva el artículo, sus identificadores únicos y tickets asociados.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                responses: { 204: { description: "Artículo desactivado o ya inactivo." }, ...errorResponses([401, 403, 404, 422]) },
+            }),
+        },
+        "/api/v1/inventory/{id}/tickets": {
+            get: operation({
+                summary: "Consultar historial de tickets de inventario",
+                description: "Funciona también para un artículo inactivo. reporter.fullName usa Ticket.reporterNameSnapshot. Orden createdAt DESC, id ASC; from/to filtran la fecha de creación del ticket.",
+                tags: ["Inventory"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"],
+                parameters: [idParameter,
+                    { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+                    { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+                    { name: "status", in: "query", schema: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] } },
+                    { name: "from", in: "query", schema: { oneOf: [{ type: "string", format: "date-time" }, { type: "string", format: "date" }] } },
+                    { name: "to", in: "query", schema: { oneOf: [{ type: "string", format: "date-time" }, { type: "string", format: "date" }] } },
+                ],
+                responses: { 200: { description: "Página del historial de tickets.", content: json({ $ref: "#/components/schemas/PaginatedInventoryTicketHistoryResponse" }) }, ...errorResponses([401, 403, 404, 422]) },
+            }),
+        },
         "/health": {
             get: operation({
                 summary: "Estado del proceso",
@@ -556,6 +619,59 @@ export const openApiDocument = {
             } },
             PaginatedActivityLogsResponse: { type: "object", required: ["success", "data", "meta"], properties: {
                 success: { const: true }, data: { type: "array", items: { $ref: "#/components/schemas/ActivityLogListItem" } },
+                meta: { type: "object", required: ["page", "pageSize", "total", "totalPages"], properties: { page: { type: "integer" }, pageSize: { type: "integer" }, total: { type: "integer" }, totalPages: { type: "integer" } } },
+            } },
+            InventoryItem: { type: "object", required: ["id", "type", "model", "assetCode", "color", "size", "building", "room", "serialNumber", "quantity", "notes", "isActive", "createdAt", "updatedAt"], properties: {
+                id: { type: "string", format: "uuid" }, type: { type: "string", enum: ["COMPUTER", "PROJECTOR", "CONTROL", "ADAPTER"] },
+                model: { type: ["string", "null"] }, assetCode: { type: ["string", "null"] }, color: { type: ["string", "null"] }, size: { type: ["string", "null"] },
+                building: { type: ["string", "null"] }, room: { type: ["string", "null"] }, serialNumber: { type: ["string", "null"] },
+                quantity: { type: "integer", minimum: 1 }, notes: { type: ["string", "null"] }, isActive: { type: "boolean" },
+                createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" },
+            } },
+            InventoryListItem: { type: "object", required: ["id", "type", "model", "assetCode", "color", "size", "location", "serialNumber", "quantity", "isActive", "updatedAt"], properties: {
+                id: { type: "string", format: "uuid" }, type: { type: "string", enum: ["COMPUTER", "PROJECTOR", "CONTROL", "ADAPTER"] },
+                model: { type: ["string", "null"] }, assetCode: { type: ["string", "null"] }, color: { type: ["string", "null"] }, size: { type: ["string", "null"] },
+                location: { type: "object", required: ["building", "room"], properties: { building: { type: ["string", "null"] }, room: { type: ["string", "null"] } } },
+                serialNumber: { type: ["string", "null"] }, quantity: { type: "integer" }, isActive: { type: "boolean" }, updatedAt: { type: "string", format: "date-time" },
+            } },
+            CreateComputerInventoryRequest: { type: "object", additionalProperties: false, required: ["type", "model", "assetCode", "color", "size", "building", "serialNumber"], properties: {
+                type: { const: "COMPUTER" }, model: { type: "string", minLength: 1 }, assetCode: { type: "string", minLength: 1 }, color: { type: "string", minLength: 1 }, size: { type: "string", minLength: 1 },
+                building: { type: "string", minLength: 1 }, room: { type: ["string", "null"] }, serialNumber: { type: "string", minLength: 1 }, quantity: { type: "integer", const: 1 }, notes: { type: ["string", "null"] },
+            } },
+            CreateProjectorInventoryRequest: { type: "object", additionalProperties: false, required: ["type", "model", "assetCode", "color", "size"], properties: {
+                type: { const: "PROJECTOR" }, model: { type: "string", minLength: 1 }, assetCode: { type: "string", minLength: 1 }, color: { type: "string", minLength: 1 }, size: { type: "string", minLength: 1 },
+                building: { type: ["string", "null"] }, room: { type: ["string", "null"] }, serialNumber: { type: ["string", "null"] }, quantity: { type: "integer", const: 1 }, notes: { type: ["string", "null"] },
+            } },
+            CreateControlInventoryRequest: { type: "object", additionalProperties: false, required: ["type", "model", "quantity"], properties: {
+                type: { const: "CONTROL" }, model: { type: "string", minLength: 1 }, assetCode: { type: ["string", "null"] }, color: { type: ["string", "null"] }, size: { type: ["string", "null"] },
+                building: { type: ["string", "null"] }, room: { type: ["string", "null"] }, serialNumber: { type: ["string", "null"] }, quantity: { type: "integer", minimum: 1 }, notes: { type: ["string", "null"] },
+            } },
+            CreateAdapterInventoryRequest: { type: "object", additionalProperties: false, required: ["type", "model", "quantity"], properties: {
+                type: { const: "ADAPTER" }, model: { type: "string", minLength: 1 }, assetCode: { type: ["string", "null"] }, color: { type: ["string", "null"] }, size: { type: ["string", "null"] },
+                building: { type: ["string", "null"] }, room: { type: ["string", "null"] }, serialNumber: { type: ["string", "null"] }, quantity: { type: "integer", minimum: 1 }, notes: { type: ["string", "null"] },
+            } },
+            CreateInventoryRequest: { oneOf: [
+                { $ref: "#/components/schemas/CreateComputerInventoryRequest" }, { $ref: "#/components/schemas/CreateProjectorInventoryRequest" },
+                { $ref: "#/components/schemas/CreateControlInventoryRequest" }, { $ref: "#/components/schemas/CreateAdapterInventoryRequest" },
+            ], discriminator: { propertyName: "type", mapping: { COMPUTER: "#/components/schemas/CreateComputerInventoryRequest", PROJECTOR: "#/components/schemas/CreateProjectorInventoryRequest", CONTROL: "#/components/schemas/CreateControlInventoryRequest", ADAPTER: "#/components/schemas/CreateAdapterInventoryRequest" } } },
+            PatchInventoryRequest: { type: "object", additionalProperties: false, properties: {
+                model: { type: "string", minLength: 1 }, assetCode: { type: ["string", "null"] }, color: { type: ["string", "null"] }, size: { type: ["string", "null"] },
+                building: { type: ["string", "null"] }, room: { type: ["string", "null"] }, serialNumber: { type: ["string", "null"] }, quantity: { type: "integer", minimum: 1 }, notes: { type: ["string", "null"] },
+            } },
+            InventoryTicketHistoryItem: { type: "object", required: ["id", "code", "title", "category", "subcategory", "priority", "status", "reporter", "createdAt", "completedAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" },
+                category: { type: "object", required: ["id", "name"], properties: { id: { type: "string", format: "uuid" }, name: { type: "string" } } },
+                subcategory: { anyOf: [{ type: "object", required: ["id", "name"], properties: { id: { type: "string", format: "uuid" }, name: { type: "string" } } }, { type: "null" }] },
+                priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, status: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+                reporter: { type: "object", required: ["fullName"], properties: { fullName: { type: "string", description: "Ticket.reporterNameSnapshot; no se resuelve desde User actual." } } },
+                createdAt: { type: "string", format: "date-time" }, completedAt: { type: ["string", "null"], format: "date-time" },
+            } },
+            PaginatedInventoryResponse: { type: "object", required: ["success", "data", "meta"], properties: {
+                success: { const: true }, data: { type: "array", items: { $ref: "#/components/schemas/InventoryListItem" } },
+                meta: { type: "object", required: ["page", "pageSize", "total", "totalPages"], properties: { page: { type: "integer" }, pageSize: { type: "integer" }, total: { type: "integer" }, totalPages: { type: "integer" } } },
+            } },
+            PaginatedInventoryTicketHistoryResponse: { type: "object", required: ["success", "data", "meta"], properties: {
+                success: { const: true }, data: { type: "array", items: { $ref: "#/components/schemas/InventoryTicketHistoryItem" } },
                 meta: { type: "object", required: ["page", "pageSize", "total", "totalPages"], properties: { page: { type: "integer" }, pageSize: { type: "integer" }, total: { type: "integer" }, totalPages: { type: "integer" } } },
             } },
             StandardSuccessResponse: {

@@ -136,13 +136,14 @@ export class InventoryService {
     }
 
     async patch(_user: AuthenticatedUser, id: string, patch: InventoryPatchBody) {
+        const changes = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as InventoryPatchInput;
         try {
             const record = await this.inventory.patchLocked(id, async (current, update) => {
                 if (!current) fail(404, "INVENTORY_ITEM_NOT_FOUND", "El artículo de inventario no existe.");
-                const merged = { ...current, ...patch };
+                const merged = { ...current, ...changes };
                 validateByType(merged);
-                if (sameValue(current, patch)) return current;
-                return update(patch);
+                if (sameValue(current, changes)) return current;
+                return update(changes);
             });
             return toInventoryDetail(record);
         } catch (error) {

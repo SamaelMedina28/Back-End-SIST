@@ -111,6 +111,22 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         };
     }
 
+    function inventoryBody(type: string, suffix = randomUUID(), overrides: Record<string, unknown> = {}) {
+        const base = {
+            type, model: `Modelo ${type}`, assetCode: `ASSET-${suffix}`, color: "Negro", size: "Mediano",
+            building: "Edificio 6", room: "603", serialNumber: `SERIAL-${suffix}`, quantity: 1, notes: null,
+        };
+        if (type === "CONTROL" || type === "ADAPTER") {
+            return { type, model: base.model, quantity: 4, ...overrides };
+        }
+        if (type === "PROJECTOR") return { ...base, building: null, room: null, serialNumber: null, ...overrides };
+        return { ...base, ...overrides };
+    }
+
+    async function inventoryPost(user: Awaited<ReturnType<typeof createTestUser>>, body: Record<string, unknown>) {
+        return request(app).post("/api/v1/inventory").set("Cookie", cookie(user)).send(body);
+    }
+
     beforeAll(async () => {
         const configuredName = assertTestDatabaseName(databaseUrl as string);
         prisma = createPrismaClient(databaseUrl as string);
@@ -830,5 +846,156 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             expect(response.status).toBe(401);
             expect(response.body.error.code).toBe("AUTHENTICATION_REQUIRED");
         }
+    });
+
+    it.each([Role.SUB_MANAGER, Role.ADMIN])("%s crea inventario de cada tipo permitido", async (role) => {
+        const manager = await createTestUser({ role, supportAreas: [SupportArea.HARDWARE] });
+        for (const type of ["COMPUTER", "PROJECTOR", "CONTROL", "ADAPTER"]) {
+            const response = await inventoryPost(manager, inventoryBody(type));
+            expect(response.status).toBe(201);
+            expect(response.body.data).toMatchObject({ type, isActive: true });
+            expect(response.body.data).not.toHaveProperty("tickets");
+        }
+    });
+
+    it.each([Role.USER, Role.SUPPORT])("responde 403 a %s en las seis operaciones de inventario", async (role) => {
+        const user = await createTestUser({ role, supportAreas: [SupportArea.HARDWARE] });
+        const id = randomUUID();
+        const paths = [
+            request(app).get("/api/v1/inventory"),
+            inventoryPost(user, inventoryBody("ADAPTER")),
+            request(app).get(`/api/v1/inventory/${id}`),
+            request(app).patch(`/api/v1/inventory/${id}`).send({ notes: "x" }),
+            request(app).delete(`/api/v1/inventory/${id}`),
+            request(app).get(`/api/v1/inventory/${id}/tickets`),
+        ];
+        const responses = await Promise.all(paths.map((call) => call.set("Cookie", cookie(user))));
+        expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403, 403]);
+    });
+
+    it("valida campos y cantidades por tipo, normaliza y rechaza campos no permitidos", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        for (const [body, field] of [
+            [{ ...inventoryBody("COMPUTER"), model: " " }, "model"],
+            [{ ...inventoryBody("COMPUTER"), assetCode: undefined }, "assetCode"],
+            [{ ...inventoryBody("COMPUTER"), serialNumber: undefined }, "serialNumber"],
+            [{ ...inventoryBody("COMPUTER"), quantity: 2 }, "quantity"],
+            [{ ...inventoryBody("PROJECTOR"), quantity: 2 }, "quantity"],
+            [{ ...inventoryBody("CONTROL"), quantity: 0 }, "quantity"],
+            [{ ...inventoryBody("ADAPTER"), unknown: "x" }, "unknown"],
+        ] as const) {
+            const response = await inventoryPost(admin, body);
+            expect(response.status).toBe(422);
+            expect(response.body.error.code).toBe("VALIDATION_ERROR");
+            expect(response.body.error.fields).toHaveProperty(field);
+        }
+        const response = await inventoryPost(admin, { ...inventoryBody("COMPUTER"), model: " Dell ", notes: "  " });
+        expect(response.body.data).toMatchObject({ model: "Dell", notes: null });
+        expect(response.body.data).not.toHaveProperty("tickets");
+    });
+
+    it("traduce unique assetCode y serialNumber, incluso ante carreras PostgreSQL", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const base = inventoryBody("COMPUTER");
+        expect((await inventoryPost(admin, base)).status).toBe(201);
+        expect((await inventoryPost(admin, { ...inventoryBody("COMPUTER"), assetCode: base.assetCode })).body.error.code).toBe("INVENTORY_ASSET_CODE_ALREADY_EXISTS");
+        expect((await inventoryPost(admin, { ...inventoryBody("COMPUTER"), serialNumber: base.serialNumber })).body.error.code).toBe("INVENTORY_SERIAL_NUMBER_ALREADY_EXISTS");
+        const assetRace = await Promise.all([
+            inventoryPost(admin, { ...inventoryBody("COMPUTER"), assetCode: "RACE-ASSET", serialNumber: "RACE-S1" }),
+            inventoryPost(admin, { ...inventoryBody("COMPUTER"), assetCode: "RACE-ASSET", serialNumber: "RACE-S2" }),
+        ]);
+        expect(assetRace.map((response) => response.status).sort()).toEqual([201, 409]);
+        expect(assetRace.find((response) => response.status === 409)?.body.error.code).toBe("INVENTORY_ASSET_CODE_ALREADY_EXISTS");
+        const serialRace = await Promise.all([
+            inventoryPost(admin, { ...inventoryBody("COMPUTER"), assetCode: "RACE-A1", serialNumber: "RACE-SERIAL" }),
+            inventoryPost(admin, { ...inventoryBody("COMPUTER"), assetCode: "RACE-A2", serialNumber: "RACE-SERIAL" }),
+        ]);
+        expect(serialRace.map((response) => response.status).sort()).toEqual([201, 409]);
+        expect(serialRace.find((response) => response.status === 409)?.body.error.code).toBe("INVENTORY_SERIAL_NUMBER_ALREADY_EXISTS");
+    });
+
+    it("lista activos por default con filtros, búsqueda, paginación y selección explícita de inactivos", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const first = await inventoryPost(admin, inventoryBody("COMPUTER", "LISTA-1", { model: "OptiPlex 7090", building: "Edificio Norte" }));
+        await inventoryPost(admin, inventoryBody("PROJECTOR", "LISTA-2", { model: "Epson EB" }));
+        await prisma.inventoryItem.update({ where: { id: first.body.data.id }, data: { isActive: false } });
+        expect((await request(app).get("/api/v1/inventory").set("Cookie", cookie(admin))).body.meta.total).toBe(1);
+        expect((await request(app).get("/api/v1/inventory?search=optiplex").set("Cookie", cookie(admin))).body.data).toHaveLength(0);
+        const result = await request(app).get("/api/v1/inventory?type=COMPUTER&building=edificio%20norte&search=asset-lista-1&active=false&page=1&pageSize=1").set("Cookie", cookie(admin)).expect(200);
+        expect(result.body.data).toHaveLength(1);
+        expect(result.body.data[0]).toMatchObject({ type: "COMPUTER", isActive: false, location: { building: "Edificio Norte" } });
+        expect(result.body.data[0]).not.toHaveProperty("notes");
+        expect((await request(app).get("/api/v1/inventory?pageSize=101").set("Cookie", cookie(admin))).status).toBe(422);
+        expect((await request(app).get("/api/v1/inventory?type=OTHER").set("Cookie", cookie(admin))).status).toBe(422);
+    });
+
+    it("consulta detalle inactivo y valida UUID/not-found", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const created = await inventoryPost(admin, inventoryBody("PROJECTOR"));
+        await prisma.inventoryItem.update({ where: { id: created.body.data.id }, data: { isActive: false } });
+        expect((await request(app).get(`/api/v1/inventory/${created.body.data.id}`).set("Cookie", cookie(admin))).body.data.isActive).toBe(false);
+        expect((await request(app).get("/api/v1/inventory/not-a-uuid").set("Cookie", cookie(admin))).status).toBe(422);
+        const missing = await request(app).get(`/api/v1/inventory/${randomUUID()}`).set("Cookie", cookie(admin));
+        expect(missing.status).toBe(404);
+        expect(missing.body.error.code).toBe("INVENTORY_ITEM_NOT_FOUND");
+    });
+
+    it("PATCH aplica cambios permitidos, valida merged state, UNIQUE, campos strict y no-op", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const first = await inventoryPost(admin, inventoryBody("COMPUTER"));
+        const second = await inventoryPost(admin, inventoryBody("COMPUTER"));
+        const id = first.body.data.id as string;
+        expect((await request(app).patch(`/api/v1/inventory/${id}`).set("Cookie", cookie(admin)).send({ room: "604", notes: "Reubicado" })).body.data).toMatchObject({ room: "604", notes: "Reubicado" });
+        expect((await request(app).patch(`/api/v1/inventory/${id}`).set("Cookie", cookie(admin)).send({ room: "604" })).status).toBe(200);
+        for (const body of [{ type: "PROJECTOR" }, { isActive: true }, { serialNumber: null }, { assetCode: second.body.data.assetCode }, { serialNumber: second.body.data.serialNumber }, { unexpected: true }]) {
+            const response = await request(app).patch(`/api/v1/inventory/${id}`).set("Cookie", cookie(admin)).send(body);
+            expect([422, 409]).toContain(response.status);
+        }
+        const duplicate = await request(app).patch(`/api/v1/inventory/${id}`).set("Cookie", cookie(admin)).send({ assetCode: second.body.data.assetCode });
+        expect(duplicate.status).toBe(409);
+        expect(duplicate.body.error.code).toBe("INVENTORY_ASSET_CODE_ALREADY_EXISTS");
+    });
+
+    it("soft delete es idempotente, retiene UNIQUE y los tickets históricos sin anular su relación", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser({ fullName: "Nombre snapshot" });
+        const created = await inventoryPost(admin, inventoryBody("PROJECTOR"));
+        const itemId = created.body.data.id as string;
+        const ticket = await post(reporter, { ...baseBody(hardwareId, hardwareSubId), inventoryItemId: itemId });
+        expect(ticket.status).toBe(201);
+        expect((await request(app).delete(`/api/v1/inventory/${itemId}`).set("Cookie", cookie(admin))).status).toBe(204);
+        expect((await request(app).delete(`/api/v1/inventory/${itemId}`).set("Cookie", cookie(admin))).status).toBe(204);
+        expect((await prisma.inventoryItem.findUniqueOrThrow({ where: { id: itemId } })).isActive).toBe(false);
+        expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.body.data.id } })).inventoryItemId).toBe(itemId);
+        expect((await inventoryPost(admin, { ...inventoryBody("PROJECTOR"), assetCode: created.body.data.assetCode })).body.error.code).toBe("INVENTORY_ASSET_CODE_ALREADY_EXISTS");
+        const newTicket = await post(reporter, { ...baseBody(hardwareId, hardwareSubId, "INACTIVE-NEW"), inventoryItemId: itemId });
+        expect(newTicket.status).toBe(409);
+        expect(newTicket.body.error.code).toBe("INVENTORY_ITEM_INACTIVE");
+    });
+
+    it("history devuelve snapshots, filtros/paginación y funciona para item inactivo o sin tickets", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser({ fullName: "Nombre antes" });
+        const created = await inventoryPost(admin, inventoryBody("PROJECTOR"));
+        const itemId = created.body.data.id as string;
+        const one = await post(reporter, { ...baseBody(hardwareId, hardwareSubId, "HIST-1"), inventoryItemId: itemId });
+        const two = await post(reporter, { ...baseBody(hardwareId, hardwareSubId, "HIST-2"), inventoryItemId: itemId });
+        await prisma.user.update({ where: { id: reporter.id }, data: { fullName: "Nombre actual" } });
+        await prisma.ticket.update({ where: { id: two.body.data.id }, data: { status: TicketStatus.COMPLETED, completedAt: new Date() } });
+        await prisma.inventoryItem.update({ where: { id: itemId }, data: { isActive: false } });
+        const history = await request(app).get(`/api/v1/inventory/${itemId}/tickets?page=1&pageSize=1`).set("Cookie", cookie(admin)).expect(200);
+        expect(history.body.meta).toMatchObject({ page: 1, pageSize: 1, total: 2, totalPages: 2 });
+        expect(history.body.data).toHaveLength(1);
+        const filtered = await request(app).get(`/api/v1/inventory/${itemId}/tickets?status=COMPLETED`).set("Cookie", cookie(admin)).expect(200);
+        expect(filtered.body.data).toHaveLength(1);
+        expect(filtered.body.data[0]).toMatchObject({ id: two.body.data.id, reporter: { fullName: "Nombre antes" }, status: "COMPLETED" });
+        expect(filtered.body.data[0]).not.toHaveProperty("reporter.id");
+        expect((await request(app).get(`/api/v1/inventory/${itemId}/tickets?from=2030-01-01`).set("Cookie", cookie(admin))).body.data).toEqual([]);
+        expect((await request(app).get(`/api/v1/inventory/${itemId}/tickets?from=2031-01-01&to=2030-01-01`).set("Cookie", cookie(admin))).status).toBe(422);
+        const emptyItem = await inventoryPost(admin, inventoryBody("CONTROL"));
+        expect((await request(app).get(`/api/v1/inventory/${emptyItem.body.data.id}/tickets`).set("Cookie", cookie(admin))).body).toMatchObject({ data: [], meta: { total: 0, totalPages: 0 } });
+        expect((await request(app).get(`/api/v1/inventory/${randomUUID()}/tickets`).set("Cookie", cookie(admin))).body.error.code).toBe("INVENTORY_ITEM_NOT_FOUND");
+        expect((await request(app).get(`/api/v1/inventory/${itemId}/tickets?pageSize=101`).set("Cookie", cookie(admin))).status).toBe(422);
+        expect(one.status).toBe(201);
     });
 });
