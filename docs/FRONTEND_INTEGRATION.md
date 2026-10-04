@@ -126,3 +126,94 @@ await fetch(
 
 La respuesta es `204 No Content`.
 
+## Helper de API
+
+Usa una función común que envíe cookies de sesión y extraiga el campo `data`:
+
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`${API_URL}/api/v1${path}`, {
+    ...options,
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  if (response.status === 204) return undefined as T;
+  const json = await response.json();
+  if (!response.ok) throw new Error(json.error?.message ?? "Error desconocido");
+  return json.data as T;
+}
+```
+
+## Cargar el formulario de ticket
+
+```ts
+const catalog = await api<{
+  categories: Array<{
+    id: string;
+    code: string;
+    name: string;
+    supportArea: string;
+    defaultPriority: "LOW" | "MEDIUM" | "HIGH" | null;
+    requiresSoftwareDetails: boolean;
+    subcategories: Array<{
+      id: string;
+      code: string;
+      name: string;
+      priority: "LOW" | "MEDIUM" | "HIGH" | null;
+    }>;
+  }>;
+  maxActiveTickets: 10;
+}>("/catalog/ticket-form");
+```
+
+## Consultar categorías
+
+```ts
+const categories = await api<Array<{
+  id: string;
+  code: string;
+  name: string;
+  supportArea: string;
+  defaultPriority: "LOW" | "MEDIUM" | "HIGH" | null;
+  isActive: boolean;
+  subcategories: Array<{ id: string; code: string; name: string; priority: string | null; isActive: boolean }>;
+}>>("/categories");
+```
+
+Solo una cuenta ADMIN puede usar `?includeInactive=true` o modificar el catálogo.
+
+## Sugerencias de soporte
+
+```ts
+const query = new URLSearchParams({ categoryId, subcategoryId });
+const suggestions = await api<Array<{ id: string; title: string; description: string }>>(
+  `/catalog/support-suggestions?${query}`,
+);
+```
+
+`subcategoryId` es opcional. La respuesta puede ser `[]` mientras no se cargue contenido activo; no hay sugerencias de demostración.
+
+## Crear una categoría (ADMIN)
+
+```ts
+await api("/categories", {
+  method: "POST",
+  body: JSON.stringify({
+    code: "NEW_CATEGORY",
+    name: "Nueva categoría",
+    supportArea: "HARDWARE",
+    defaultPriority: "MEDIUM",
+    requiresSoftwareDetails: false,
+  }),
+});
+```
+
+Los usuarios comunes solo consultan categorías y catálogo. Las solicitudes de escritura para otras cuentas responden `403 FORBIDDEN`.
+
+La documentación interactiva está disponible en `/api/docs` y el documento OpenAPI en `/api/openapi.json`.

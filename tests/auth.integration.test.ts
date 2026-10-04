@@ -1,8 +1,10 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import jwt from "jsonwebtoken";
 import request from "supertest";
+import SwaggerParser from "@apidevtools/swagger-parser";
 import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
+import { openApiDocument } from "../src/openapi/openapi.js";
 import { AppError } from "../src/common/errors/app-error.js";
 import { errorMiddleware, notFoundMiddleware } from "../src/middlewares/error.middleware.js";
 import { requestIdMiddleware } from "../src/middlewares/request-id.middleware.js";
@@ -15,31 +17,43 @@ import { GoogleOAuthProvider } from "../src/modules/auth/google.provider.js";
 import { AuthService, validateGoogleIdentity } from "../src/modules/auth/auth.service.js";
 import { SessionService } from "../src/modules/auth/session.service.js";
 import { toAuthenticatedUser } from "../src/modules/auth/user.mapper.js";
+import { resolveEffectivePriority } from "../src/modules/category/category.service.js";
 import {
     CommunityType,
     FakeGoogleProvider,
+    FakeCatalogRepository,
     FakeUserRepository,
+    makeCategory,
+    makeSubcategory,
+    makeSupportSuggestion,
     makeUser,
     Role,
     SupportArea,
+    TicketPriority,
     testConfig,
 } from "./helpers/fakes.js";
+
+let activeTestUsers: ReturnType<typeof makeUser>[] = [];
 
 function createContext(input: {
     users?: ReturnType<typeof makeUser>[];
     google?: FakeGoogleProvider;
     checkDatabase?: () => Promise<void>;
     nodeEnv?: "development" | "test" | "production";
+    catalog?: FakeCatalogRepository;
 } = {}) {
-    const users = new FakeUserRepository(input.users ?? []);
+    activeTestUsers = input.users ?? [];
+    const users = new FakeUserRepository(activeTestUsers);
     const google = input.google ?? new FakeGoogleProvider();
+    const catalog = input.catalog ?? new FakeCatalogRepository();
     const app = createApp({
         config: { ...testConfig, nodeEnv: input.nodeEnv ?? testConfig.nodeEnv },
         users,
+        catalog,
         google,
         checkDatabase: input.checkDatabase ?? (async () => undefined),
     });
-    return { app, users, google };
+    return { app, users, google, catalog };
 }
 
 async function beginOAuth(agent: ReturnType<typeof request.agent>): Promise<string> {
@@ -50,6 +64,12 @@ async function beginOAuth(agent: ReturnType<typeof request.agent>): Promise<stri
 function sessionCookieFor(user: ReturnType<typeof makeUser>): string {
     const token = new SessionService(testConfig).createSessionToken(user);
     return `${testConfig.sessionCookieName}=${token}`;
+}
+
+function sessionCookieForRole(role: Role): string {
+    const user = makeUser({ role });
+    activeTestUsers.push(user);
+    return sessionCookieFor(user);
 }
 
 function onboardingCookieFor(overrides: Record<string, unknown> = {}): string {
@@ -169,6 +189,7 @@ describe("OAuth flow", () => {
         const app = createApp({
             config: testConfig,
             users,
+            catalog: new FakeCatalogRepository(),
             google: new GoogleOAuthProvider(testConfig),
             checkDatabase: async () => undefined,
         });
@@ -514,5 +535,390 @@ describe("cookies and health", () => {
         expect(response.body.error.code).toBe("INTERNAL_ERROR");
         expect(JSON.stringify(response.body)).not.toContain("stack");
         expect(JSON.stringify(response.body)).not.toContain("private technical detail");
+    });
+});
+
+describe("catalog and categories API", () => {
+    it("ticket-form without a session returns 401", async () => {
+        const { app } = createContext();
+        await request(app).get("/api/v1/catalog/ticket-form").expect(401);
+    });
+
+    it("ticket-form returns only active categories and active subcategories", async () => {
+        const active = makeCategory({
+            name: "Activa",
+            subcategories: [
+                makeSubcategory({ name: "Activa hija", isActive: true }),
+                makeSubcategory({ name: "Inactiva hija", isActive: false }),
+            ],
+        });
+        const inactive = makeCategory({ code: "INACTIVE", name: "Inactiva", isActive: false });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [inactive, active] }) });
+        const response = await request(app)
+            .get("/api/v1/catalog/ticket-form")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .expect(200);
+
+        expect(response.body.data.categories.map((category: { id: string }) => category.id)).toEqual([active.id]);
+        expect(response.body.data.categories[0].subcategories.map((subcategory: { name: string }) => subcategory.name))
+            .toEqual(["Activa hija"]);
+    });
+
+    it("ticket-form includes maxActiveTickets=10 and preserves null priorities", async () => {
+        const category = makeCategory({
+            defaultPriority: null,
+            subcategories: [makeSubcategory({ priority: null })],
+        });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .get("/api/v1/catalog/ticket-form")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .expect(200);
+
+        expect(response.body.data.maxActiveTickets).toBe(10);
+        expect(response.body.data.categories[0].defaultPriority).toBeNull();
+        expect(response.body.data.categories[0].subcategories[0].priority).toBeNull();
+    });
+
+    it("catalog data comes from the repository instead of a TypeScript category list", async () => {
+        const category = makeCategory({ code: "DATABASE_CATEGORY", name: "Desde repositorio" });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .get("/api/v1/catalog/ticket-form")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .expect(200);
+        expect(response.body.data.categories[0].code).toBe("DATABASE_CATEGORY");
+    });
+
+    it.each([Role.USER, Role.SUPPORT, Role.SUB_MANAGER, Role.ADMIN])("%s can list active categories", async (role) => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .get("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(role))
+            .expect(200);
+        expect(response.body.data).toHaveLength(1);
+    });
+
+    it("only ADMIN can request inactive categories", async () => {
+        const active = makeCategory({ name: "A activa" });
+        const inactive = makeCategory({ code: "INACTIVE", name: "Z inactiva", isActive: false });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [active, inactive] }) });
+        await request(app)
+            .get("/api/v1/categories?includeInactive=true")
+            .set("Cookie", sessionCookieForRole(Role.SUPPORT))
+            .expect(403);
+        const response = await request(app)
+            .get("/api/v1/categories?includeInactive=true")
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .expect(200);
+        expect(response.body.data).toHaveLength(2);
+    });
+
+    it("rejects an invalid includeInactive value", async () => {
+        const { app } = createContext();
+        const response = await request(app)
+            .get("/api/v1/categories?includeInactive=maybe")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .expect(422);
+        expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("USER cannot create a category", async () => {
+        const { app } = createContext();
+        await request(app)
+            .post("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .send({ code: "NEW_CATEGORY", name: "Nueva", supportArea: SupportArea.HARDWARE })
+            .expect(403);
+    });
+
+    it("ADMIN can create a category and null/default fields are preserved", async () => {
+        const { app } = createContext();
+        const response = await request(app)
+            .post("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "NEW_CATEGORY", name: "Nueva", supportArea: SupportArea.HARDWARE })
+            .expect(201);
+        expect(response.body.data.code).toBe("NEW_CATEGORY");
+        expect(response.body.data.defaultPriority).toBeNull();
+        expect(response.body.data.requiresSoftwareDetails).toBe(false);
+        expect(response.body.data.subcategories).toEqual([]);
+    });
+
+    it("duplicate category code returns CATEGORY_CODE_ALREADY_EXISTS", async () => {
+        const category = makeCategory({ code: "EXISTS" });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .post("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "EXISTS", name: "Duplicada", supportArea: SupportArea.HARDWARE })
+            .expect(409);
+        expect(response.body.error.code).toBe("CATEGORY_CODE_ALREADY_EXISTS");
+    });
+
+    it("invalid category input returns 422", async () => {
+        const { app } = createContext();
+        const response = await request(app)
+            .post("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "lower-case", name: " ", supportArea: "UNKNOWN" })
+            .expect(422);
+        expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("ADMIN can patch editable category fields", async () => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .patch(`/api/v1/categories/${category.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ name: "Nombre actualizado", defaultPriority: "MEDIUM" })
+            .expect(200);
+        expect(response.body.data.name).toBe("Nombre actualizado");
+        expect(response.body.data.defaultPriority).toBe("MEDIUM");
+    });
+
+    it("category PATCH does not allow changing code", async () => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .patch(`/api/v1/categories/${category.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "CHANGED" })
+            .expect(422);
+        expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("category routes validate UUIDs and map missing categories to 404", async () => {
+        const { app } = createContext();
+        await request(app)
+            .patch("/api/v1/categories/not-a-uuid")
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ name: "Nuevo" })
+            .expect(422);
+        const response = await request(app)
+            .patch(`/api/v1/categories/${makeCategory().id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ name: "Nuevo" })
+            .expect(404);
+        expect(response.body.error.code).toBe("CATEGORY_NOT_FOUND");
+    });
+
+    it("category DELETE is soft and idempotent; inactive category is hidden publicly", async () => {
+        const child = makeSubcategory();
+        const category = makeCategory({ subcategories: [child] });
+        child.categoryId = category.id;
+        const catalog = new FakeCatalogRepository({ categories: [category] });
+        const { app } = createContext({ catalog });
+        const cookie = sessionCookieForRole(Role.ADMIN);
+        await request(app).delete(`/api/v1/categories/${category.id}`).set("Cookie", cookie).expect(204);
+        await request(app).delete(`/api/v1/categories/${category.id}`).set("Cookie", cookie).expect(204);
+        expect(catalog.categories).toHaveLength(1);
+        expect(catalog.categories[0]?.isActive).toBe(false);
+        expect(catalog.categories[0]?.subcategories[0]?.isActive).toBe(true);
+        const list = await request(app)
+            .get("/api/v1/categories")
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .expect(200);
+        expect(list.body.data).toEqual([]);
+    });
+
+    it("ADMIN can create subcategories", async () => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .post(`/api/v1/categories/${category.id}/subcategories`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "NEW_SUBCATEGORY", name: "Nueva subcategoría", priority: "HIGH" })
+            .expect(201);
+        expect(response.body.data.categoryId).toBe(category.id);
+    });
+
+    it("USER cannot create a subcategory", async () => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        await request(app)
+            .post(`/api/v1/categories/${category.id}/subcategories`)
+            .set("Cookie", sessionCookieForRole(Role.USER))
+            .send({ code: "NEW_SUBCATEGORY", name: "Nueva" })
+            .expect(403);
+    });
+
+    it("subcategory creation returns 404 for a missing category and 409 for an inactive category", async () => {
+        const inactive = makeCategory({ isActive: false });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [inactive] }) });
+        const body = { code: "SUB", name: "Sub" };
+        const cookie = sessionCookieForRole(Role.ADMIN);
+        const missing = await request(app)
+            .post(`/api/v1/categories/${makeCategory().id}/subcategories`)
+            .set("Cookie", cookie).send(body).expect(404);
+        expect(missing.body.error.code).toBe("CATEGORY_NOT_FOUND");
+        const inactiveResponse = await request(app)
+            .post(`/api/v1/categories/${inactive.id}/subcategories`)
+            .set("Cookie", cookie).send(body).expect(409);
+        expect(inactiveResponse.body.error.code).toBe("CATEGORY_INACTIVE");
+    });
+
+    it("duplicate subcategory code conflicts within a category but is valid in another", async () => {
+        const first = makeCategory({ subcategories: [makeSubcategory({ code: "OTHER" })] });
+        const second = makeCategory({ code: "OTHER_CATEGORY" });
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [first, second] }) });
+        const cookie = sessionCookieForRole(Role.ADMIN);
+        const duplicate = await request(app)
+            .post(`/api/v1/categories/${first.id}/subcategories`)
+            .set("Cookie", cookie).send({ code: "OTHER", name: "Otro" }).expect(409);
+        expect(duplicate.body.error.code).toBe("SUBCATEGORY_CODE_ALREADY_EXISTS");
+        await request(app)
+            .post(`/api/v1/categories/${second.id}/subcategories`)
+            .set("Cookie", cookie).send({ code: "OTHER", name: "Otro" }).expect(201);
+    });
+
+    it("ADMIN can patch subcategory name and set priority to null", async () => {
+        const subcategory = makeSubcategory({ priority: TicketPriority.HIGH });
+        const category = makeCategory({ subcategories: [subcategory] });
+        subcategory.categoryId = category.id;
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const nameResponse = await request(app)
+            .patch(`/api/v1/subcategories/${subcategory.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ name: "Nombre editado" }).expect(200);
+        expect(nameResponse.body.data.name).toBe("Nombre editado");
+        const priorityResponse = await request(app)
+            .patch(`/api/v1/subcategories/${subcategory.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ priority: null }).expect(200);
+        expect(priorityResponse.body.data.priority).toBeNull();
+    });
+
+    it("subcategory PATCH does not allow changing code", async () => {
+        const subcategory = makeSubcategory();
+        const category = makeCategory({ subcategories: [subcategory] });
+        subcategory.categoryId = category.id;
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .patch(`/api/v1/subcategories/${subcategory.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN))
+            .send({ code: "CHANGED" }).expect(422);
+        expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    });
+
+    it("subcategory DELETE is soft and removes it from ticket-form", async () => {
+        const subcategory = makeSubcategory();
+        const category = makeCategory({ subcategories: [subcategory] });
+        subcategory.categoryId = category.id;
+        const catalog = new FakeCatalogRepository({ categories: [category] });
+        const { app } = createContext({ catalog });
+        await request(app)
+            .delete(`/api/v1/subcategories/${subcategory.id}`)
+            .set("Cookie", sessionCookieForRole(Role.ADMIN)).expect(204);
+        expect(category.subcategories).toHaveLength(1);
+        expect(category.subcategories[0]?.isActive).toBe(false);
+        const form = await request(app)
+            .get("/api/v1/catalog/ticket-form")
+            .set("Cookie", sessionCookieForRole(Role.USER)).expect(200);
+        expect(form.body.data.categories[0].subcategories).toEqual([]);
+    });
+
+    it("support-suggestions requires categoryId and validates query UUIDs", async () => {
+        const { app } = createContext();
+        const cookie = sessionCookieForRole(Role.USER);
+        const missing = await request(app).get("/api/v1/catalog/support-suggestions").set("Cookie", cookie).expect(422);
+        expect(missing.body.error.code).toBe("VALIDATION_ERROR");
+        await request(app)
+            .get("/api/v1/catalog/support-suggestions?categoryId=invalid")
+            .set("Cookie", cookie).expect(422);
+    });
+
+    it("support-suggestions returns 404 for missing category and unrelated subcategory", async () => {
+        const category = makeCategory();
+        const otherCategory = makeCategory({ code: "OTHER" });
+        const subcategory = makeSubcategory({ categoryId: otherCategory.id });
+        otherCategory.subcategories.push(subcategory);
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category, otherCategory] }) });
+        const cookie = sessionCookieForRole(Role.USER);
+        const missing = await request(app)
+            .get(`/api/v1/catalog/support-suggestions?categoryId=${makeCategory().id}`)
+            .set("Cookie", cookie).expect(404);
+        expect(missing.body.error.code).toBe("CATEGORY_NOT_FOUND");
+        const unrelated = await request(app)
+            .get(`/api/v1/catalog/support-suggestions?categoryId=${category.id}&subcategoryId=${subcategory.id}`)
+            .set("Cookie", cookie).expect(404);
+        expect(unrelated.body.error.code).toBe("SUBCATEGORY_NOT_FOUND");
+    });
+
+    it("support-suggestions returns active category and matching-subcategory suggestions only", async () => {
+        const category = makeCategory();
+        const subcategory = makeSubcategory({ categoryId: category.id });
+        category.subcategories.push(subcategory);
+        const suggestions = [
+            makeSupportSuggestion({ categoryId: category.id, title: "Global" }),
+            makeSupportSuggestion({ categoryId: category.id, subcategoryId: subcategory.id, title: "Specific" }),
+            makeSupportSuggestion({ categoryId: category.id, isActive: false, title: "Disabled" }),
+            makeSupportSuggestion({ categoryId: makeCategory().id, title: "Other category" }),
+        ];
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category], suggestions }) });
+        const response = await request(app)
+            .get(`/api/v1/catalog/support-suggestions?categoryId=${category.id}&subcategoryId=${subcategory.id}`)
+            .set("Cookie", sessionCookieForRole(Role.USER)).expect(200);
+        expect(response.body.data.map((item: { title: string }) => item.title).sort()).toEqual(["Global", "Specific"]);
+    });
+
+    it("support-suggestions returns an empty array when no records exist", async () => {
+        const category = makeCategory();
+        const { app } = createContext({ catalog: new FakeCatalogRepository({ categories: [category] }) });
+        const response = await request(app)
+            .get(`/api/v1/catalog/support-suggestions?categoryId=${category.id}`)
+            .set("Cookie", sessionCookieForRole(Role.USER)).expect(200);
+        expect(response.body.data).toEqual([]);
+    });
+});
+
+describe("effective priority helper", () => {
+    it("prefers subcategory priority when it exists", () => {
+        expect(resolveEffectivePriority(TicketPriority.HIGH, TicketPriority.LOW)).toBe(TicketPriority.HIGH);
+    });
+
+    it("inherits category priority when subcategory priority is null", () => {
+        expect(resolveEffectivePriority(null, TicketPriority.MEDIUM)).toBe(TicketPriority.MEDIUM);
+    });
+
+    it("keeps priority null when both values are null", () => {
+        expect(resolveEffectivePriority(null, null)).toBeNull();
+    });
+});
+
+describe("OpenAPI and Swagger UI", () => {
+    it("serves the OpenAPI JSON document", async () => {
+        const { app } = createContext();
+        const response = await request(app).get("/api/openapi.json").expect(200);
+        expect(response.body.openapi).toMatch(/^3\./);
+    });
+
+    it("validates as an OpenAPI document and resolves every local reference", async () => {
+        await SwaggerParser.validate(openApiDocument as never);
+    });
+
+    it("documents implemented routes and does not document tickets", async () => {
+        const { app } = createContext();
+        const response = await request(app).get("/api/openapi.json").expect(200);
+        expect(response.body.paths["/api/v1/categories/{id}"].patch).toBeDefined();
+        expect(response.body.paths["/api/v1/catalog/ticket-form"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/auth/me"].get).toBeDefined();
+        expect(Object.keys(response.body.paths).some((path) => path.includes("tickets"))).toBe(false);
+    });
+
+    it("serves Swagger UI at /api/docs", async () => {
+        const { app } = createContext();
+        const response = await request(app).get("/api/docs").expect(200);
+        expect(response.text).toContain("Swagger UI");
+        expect(response.text).toContain("swagger-ui-bundle.js");
+    });
+
+    it("returns standardized 404 for endpoints outside this stage", async () => {
+        const { app } = createContext();
+        const response = await request(app).get("/api/v1/tickets").expect(404);
+        expect(response.body.success).toBe(false);
+        expect(response.body.error.code).toBe("ROUTE_NOT_FOUND");
     });
 });

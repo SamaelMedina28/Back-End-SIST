@@ -7,12 +7,16 @@ import { errorMiddleware, notFoundMiddleware } from "./middlewares/error.middlew
 import { requestIdMiddleware } from "./middlewares/request-id.middleware.js";
 import { requestLoggerMiddleware } from "./middlewares/request-logger.middleware.js";
 import type { GoogleIdentityProvider, UserRepository } from "./modules/auth/auth.types.js";
+import type { CatalogRepository } from "./modules/category/category.types.js";
+import swaggerUi from "swagger-ui-express";
 import { HealthController } from "./modules/health/health.controller.js";
 import { createApiRouter } from "./routes/index.js";
+import { openApiDocument } from "./openapi/openapi.js";
 
 export interface AppDependencies {
     config: AppConfig;
     users: UserRepository;
+    catalog: CatalogRepository;
     google: GoogleIdentityProvider;
     checkDatabase: () => Promise<void>;
 }
@@ -35,9 +39,25 @@ export function createApp(dependencies: AppDependencies): Application {
 
     app.get("/health", health.health);
     app.get("/ready", health.ready);
+    app.get("/api/openapi.json", (_req, res) => res.json(openApiDocument));
+    app.use(
+        "/api/docs",
+        helmet.contentSecurityPolicy({
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'", "'unsafe-inline'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:"],
+                connectSrc: ["'self'"],
+            },
+        }),
+        swaggerUi.serve,
+        swaggerUi.setup(openApiDocument),
+    );
     app.use("/api/v1", createApiRouter({
         config: dependencies.config,
         users: dependencies.users,
+        catalog: dependencies.catalog,
         google: dependencies.google,
     }));
 

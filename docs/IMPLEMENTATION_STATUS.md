@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 2: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 3: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -19,7 +19,11 @@
 | Health/readiness | DONE | 2/2 | 3 de disponibilidad |
 | Seguridad (Helmet, CORS, rate limit, Zod) | DONE | Transversal | Cubierto por integración |
 | Logging estructurado y request ID | DONE | Transversal | Cubierto por respuestas de error |
-| Catálogo de categorías y subcategorías | NOT_STARTED | 0/8 | 0 |
+| Categories API | DONE | 4/4 | Cubierto en integración |
+| Subcategories API | DONE | 3/3 | Cubierto en integración |
+| Ticket form catalog | DONE | 1/1 | Categorías activas y prioridades null |
+| Support suggestions read API | DONE | 1/1 | Sin seed ficticio; soporta respuesta vacía |
+| OpenAPI / Swagger UI | DONE | 2/2 | Documento validado y UI servida |
 | Tickets y creación | NOT_STARTED | 0/13 | 0 |
 | Timeline / eventos de ticket | NOT_STARTED | Incluido en tickets | 0 |
 | Autoasignación y asignación administrativa | NOT_STARTED | Incluido en tickets | 0 |
@@ -31,7 +35,6 @@
 | Miembros de soporte | NOT_STARTED | 0/5 | 0 |
 | Reportes | NOT_STARTED | 0/1 | 0 |
 | Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
-| OpenAPI / Swagger UI | NOT_STARTED | 0/2 | 0 |
 
 ## Etapa 2 implementada
 
@@ -53,8 +56,19 @@
 - `GET /api/v1/auth/me`
 - `POST /api/v1/auth/logout`
 - `PATCH /api/v1/users/me`
+- `GET /api/v1/catalog/ticket-form`
+- `GET /api/v1/catalog/support-suggestions`
+- `GET /api/v1/categories`
+- `POST /api/v1/categories`
+- `PATCH /api/v1/categories/:id`
+- `DELETE /api/v1/categories/:id`
+- `POST /api/v1/categories/:categoryId/subcategories`
+- `PATCH /api/v1/subcategories/:id`
+- `DELETE /api/v1/subcategories/:id`
 - `GET /health`
 - `GET /ready`
+- `GET /api/docs`
+- `GET /api/openapi.json`
 
 ## Decisiones y discrepancias documentadas
 
@@ -65,12 +79,17 @@
 - La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
 - No se implementó OpenAPI en esta etapa porque no existía una estructura previa reutilizable y el alcance lo declaró opcional.
 - No se implementaron endpoints de categorías, tickets, bitácora, inventario, dashboard, reportes, SMTP ni worker de notificaciones.
+- Categorías y subcategorías se ordenan por `name ASC`; el listado usa una lectura anidada del repositorio Prisma para evitar N+1.
+- `includeInactive=true` está disponible únicamente para ADMIN. Las bajas son lógicas e idempotentes; desactivar categoría no desactiva sus subcategorías.
+- `SupportSuggestion` no recibió seed: no había contenido técnico autorizado para inventar. El endpoint devuelve una lista vacía cuando no hay filas activas.
+- Los tests de etapa 3 usan repositorios en memoria y Supertest; no conectan ni realizan operaciones destructivas en `support_system`. La implementación Prisma aún no tiene una prueba de integración con una base PostgreSQL exclusiva para tests.
+- Swagger UI se sirve desde la dependencia local en `/api/docs`; la relajación de CSP requerida por sus assets se limita a esa ruta.
 
 ## Verificación
 
 - `prisma validate`: correcto.
 - `prisma generate`: correcto; Prisma Client 7.9.1 generado.
-- `pnpm test`: 1 archivo y 38 pruebas aprobadas.
+- `pnpm test`: 1 archivo y 71 pruebas aprobadas.
 - `pnpm build`: correcto.
 - `tsc --noEmit`: correcto.
 - No existe login por contraseña ni campo `password` en `User`.
@@ -80,4 +99,4 @@
 
 ## Próxima etapa
 
-La API de Categories/Catalog continúa en `NOT_STARTED`. No se avanzó a esa etapa.
+Tickets Core continúa en `NOT_STARTED`. No se avanzó a esa etapa.

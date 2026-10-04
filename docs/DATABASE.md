@@ -155,3 +155,9 @@ DATABASE_URL="postgresql://..." pnpm prisma studio
 ```
 
 Prisma Studio sirve para inspección y desarrollo. Las modificaciones de esquema deben hacerse mediante el schema y migraciones versionadas.
+
+## Base de datos de pruebas
+
+La suite HTTP usa un repositorio en memoria para usuarios y catálogo, junto con Supertest. No conecta a `support_system`, no aplica migraciones y no borra datos manuales. Esto permite probar middleware, reglas de catálogo, roles, respuestas y OpenAPI de forma aislada.
+
+La suite no sustituye una futura prueba de integración de `PrismaCatalogRepository` contra PostgreSQL. Cuando se agregue, deberá usar una base exclusiva de tests y nunca apuntar a `support_system`.

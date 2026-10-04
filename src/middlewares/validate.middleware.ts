@@ -24,7 +24,12 @@ export function validate(schema: RequestSchema | ZodType) {
                 req.body = await schema.parseAsync(req.body);
             } else {
                 if (schema.body) req.body = await schema.body.parseAsync(req.body);
-                if (schema.query) Object.assign(req.query, await schema.query.parseAsync(req.query));
+                if (schema.query) {
+                    Object.defineProperty(req, "query", {
+                        configurable: true,
+                        value: await schema.query.parseAsync(req.query),
+                    });
+                }
                 if (schema.params) Object.assign(req.params, await schema.params.parseAsync(req.params));
             }
             next();

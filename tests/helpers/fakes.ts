@@ -3,6 +3,7 @@ import {
     CommunityType,
     Role,
     SupportArea,
+    TicketPriority,
 } from "../../generated/prisma/client.js";
 import type { AppConfig } from "../../src/config/env.js";
 import {
@@ -13,6 +14,20 @@ import {
     type UserEntity,
     type UserRepository,
 } from "../../src/modules/auth/auth.types.js";
+import type {
+    CatalogRepository,
+    CategoryRecord,
+    CreateCategoryInput,
+    CreateSubcategoryInput,
+    SubcategoryRecord,
+    SupportSuggestionRecord,
+    UpdateCategoryInput,
+    UpdateSubcategoryInput,
+} from "../../src/modules/category/category.types.js";
+import {
+    CatalogRepositoryConflict,
+    CatalogRepositoryNotFound,
+} from "../../src/modules/category/category.types.js";
 
 export const testConfig: AppConfig = {
     nodeEnv: "test",
@@ -162,5 +177,153 @@ export class FakeGoogleProvider implements GoogleIdentityProvider {
     }
 }
 
-export { CommunityType, Role, SupportArea };
+export function makeCategory(overrides: Partial<CategoryRecord> = {}): CategoryRecord {
+    const now = new Date();
+    return {
+        id: randomUUID(),
+        code: "PROJECTOR_FAILURE",
+        name: "Falla de proyector",
+        supportArea: SupportArea.HARDWARE,
+        defaultPriority: null,
+        isActive: true,
+        requiresSoftwareDetails: false,
+        createdAt: now,
+        updatedAt: now,
+        subcategories: [],
+        ...overrides,
+    };
+}
 
+export function makeSubcategory(overrides: Partial<SubcategoryRecord> = {}): SubcategoryRecord {
+    const now = new Date();
+    return {
+        id: randomUUID(),
+        categoryId: randomUUID(),
+        code: "CONNECTION_FAILURE",
+        name: "Falla de conexión",
+        priority: TicketPriority.HIGH,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        ...overrides,
+    };
+}
+
+export function makeSupportSuggestion(
+    overrides: Partial<SupportSuggestionRecord> = {},
+): SupportSuggestionRecord {
+    const now = new Date();
+    return {
+        id: randomUUID(),
+        categoryId: randomUUID(),
+        subcategoryId: null,
+        title: "Sugerencia de prueba",
+        description: "Descripción de prueba.",
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+        ...overrides,
+    };
+}
+
+export class FakeCatalogRepository implements CatalogRepository {
+    readonly categories: CategoryRecord[];
+    readonly suggestions: SupportSuggestionRecord[];
+
+    constructor(input: { categories?: CategoryRecord[]; suggestions?: SupportSuggestionRecord[] } = {}) {
+        this.categories = input.categories ?? [];
+        this.suggestions = input.suggestions ?? [];
+    }
+
+    async listCategories(includeInactive: boolean): Promise<CategoryRecord[]> {
+        return this.categories
+            .filter((category) => includeInactive || category.isActive)
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((category) => ({
+                ...category,
+                subcategories: category.subcategories
+                    .filter((subcategory) => subcategory.isActive)
+                    .sort((a, b) => a.name.localeCompare(b.name)),
+            }));
+    }
+
+    async findCategoryById(id: string): Promise<CategoryRecord | null> {
+        return this.categories.find((category) => category.id === id) ?? null;
+    }
+
+    async findActiveCategoryById(id: string): Promise<CategoryRecord | null> {
+        return this.categories.find((category) => category.id === id && category.isActive) ?? null;
+    }
+
+    async createCategory(input: CreateCategoryInput): Promise<CategoryRecord> {
+        if (this.categories.some((category) => category.code === input.code)) {
+            throw new CatalogRepositoryConflict("categoryCode");
+        }
+        const category = makeCategory({ ...input, subcategories: [] });
+        this.categories.push(category);
+        return category;
+    }
+
+    async updateCategory(id: string, input: UpdateCategoryInput): Promise<CategoryRecord> {
+        const category = this.categories.find((value) => value.id === id);
+        if (!category) throw new CatalogRepositoryNotFound();
+        Object.assign(category, input);
+        category.updatedAt = new Date();
+        return category;
+    }
+
+    async deactivateCategory(id: string): Promise<void> {
+        const category = this.categories.find((value) => value.id === id);
+        if (!category) throw new CatalogRepositoryNotFound();
+        category.isActive = false;
+    }
+
+    async findSubcategoryById(id: string): Promise<SubcategoryRecord | null> {
+        return this.categories.flatMap((category) => category.subcategories)
+            .find((subcategory) => subcategory.id === id) ?? null;
+    }
+
+    async findSubcategoryByIdAndCategory(id: string, categoryId: string): Promise<SubcategoryRecord | null> {
+        return this.categories.find((category) => category.id === categoryId)?.subcategories
+            .find((subcategory) => subcategory.id === id) ?? null;
+    }
+
+    async createSubcategory(input: CreateSubcategoryInput): Promise<SubcategoryRecord> {
+        const category = this.categories.find((value) => value.id === input.categoryId);
+        if (!category) throw new CatalogRepositoryNotFound();
+        if (category.subcategories.some((subcategory) => subcategory.code === input.code)) {
+            throw new CatalogRepositoryConflict("subcategoryCode");
+        }
+        const subcategory = makeSubcategory(input);
+        category.subcategories.push(subcategory);
+        return subcategory;
+    }
+
+    async updateSubcategory(id: string, input: UpdateSubcategoryInput): Promise<SubcategoryRecord> {
+        const subcategory = await this.findSubcategoryById(id);
+        if (!subcategory) throw new CatalogRepositoryNotFound();
+        Object.assign(subcategory, input);
+        subcategory.updatedAt = new Date();
+        return subcategory;
+    }
+
+    async deactivateSubcategory(id: string): Promise<void> {
+        const subcategory = await this.findSubcategoryById(id);
+        if (!subcategory) throw new CatalogRepositoryNotFound();
+        subcategory.isActive = false;
+    }
+
+    async listActiveSupportSuggestions(
+        categoryId: string,
+        subcategoryId: string | undefined,
+    ): Promise<SupportSuggestionRecord[]> {
+        return this.suggestions
+            .filter((suggestion) => suggestion.isActive && suggestion.categoryId === categoryId)
+            .filter((suggestion) => subcategoryId === undefined
+                ? suggestion.subcategoryId === null
+                : suggestion.subcategoryId === null || suggestion.subcategoryId === subcategoryId)
+            .sort((a, b) => a.title.localeCompare(b.title));
+    }
+}
+
+export { CommunityType, Role, SupportArea, TicketPriority };
