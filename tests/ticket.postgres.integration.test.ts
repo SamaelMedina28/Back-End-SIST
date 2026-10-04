@@ -494,11 +494,11 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const ticket = await createTestTicket(reporter);
         const change = (priority: string, reason = "Impacto en clase") => request(app).patch(`/api/v1/tickets/${ticket.id}/priority`)
             .set("Cookie", cookie(admin)).send({ priority, reason });
-        expect((await change("HIGH")).status).toBe(200);
-        expect((await change("HIGH")).status).toBe(200);
+        expect((await change("LOW")).status).toBe(200);
+        expect((await change("LOW")).status).toBe(200);
         expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "PRIORITY_CHANGED" } })).toBe(1);
         await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.COMPLETED, completedAt: new Date(), duplicateKey: null } });
-        expect((await change("LOW")).body.error.code).toBe("TICKET_NOT_ACTIVE");
+        expect((await change("HIGH")).body.error.code).toBe("TICKET_NOT_ACTIVE");
     });
 
     it("Ticket se revierte cuando falla la inserción del evento CREATED", async () => {
