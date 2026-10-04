@@ -9,6 +9,8 @@ import { PrismaUserRepository } from "../src/modules/auth/user.repository.js";
 import { SessionService } from "../src/modules/auth/session.service.js";
 import { PrismaCatalogRepository } from "../src/modules/category/category.repository.js";
 import { PrismaTicketRepository } from "../src/modules/ticket/ticket.repository.js";
+import { PrismaActivityLogRepository } from "../src/modules/activity-log/activity-log.repository.js";
+import { PrismaInventoryRepository } from "../src/modules/inventory/inventory.repository.js";
 import { FakeGoogleProvider, testConfig } from "./helpers/fakes.js";
 
 const databaseUrl = process.env.DATABASE_URL_TEST;
@@ -92,6 +94,23 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         return response.body.data as { id: string; code: string };
     }
 
+    async function postActivityLog(user: Awaited<ReturnType<typeof createTestUser>>, input: Record<string, unknown>) {
+        return request(app).post("/api/v1/activity-log").set("Cookie", cookie(user)).send(input);
+    }
+
+    function activityBody(ticketId: string, participantIds: string[], overrides: Record<string, unknown> = {}) {
+        return {
+            ticketId,
+            activity: "Diagnóstico de conectividad y revisión de cableado.",
+            participantIds,
+            serviceStartedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            serviceEndedAt: null,
+            timeSpentMinutes: 90,
+            status: "IN_PROGRESS",
+            ...overrides,
+        };
+    }
+
     beforeAll(async () => {
         const configuredName = assertTestDatabaseName(databaseUrl as string);
         prisma = createPrismaClient(databaseUrl as string);
@@ -139,6 +158,8 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         app = createApp({
             config: { ...testConfig, databaseUrl: databaseUrl as string },
             users: new PrismaUserRepository(prisma), catalog, tickets: new PrismaTicketRepository(prisma),
+            activityLogs: new PrismaActivityLogRepository(prisma),
+            inventory: new PrismaInventoryRepository(prisma),
             google: new FakeGoogleProvider(), checkDatabase: async () => { await prisma.$queryRaw`SELECT 1`; },
         });
     });
@@ -473,6 +494,20 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "STATUS_CHANGED" } })).toBe(3);
     });
 
+    it("completar libera el duplicateKey, fija completedAt y preserva la asignación", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter, { room: "COMPLETE-MUTATION" });
+        await request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support));
+        await request(app).patch(`/api/v1/tickets/${ticket.id}/status`).set("Cookie", cookie(support)).send({ status: "IN_PROGRESS" });
+        const response = await request(app).patch(`/api/v1/tickets/${ticket.id}/status`).set("Cookie", cookie(support)).send({ status: "COMPLETED" });
+        expect(response.status).toBe(200);
+        const completed = await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+        expect(completed).toMatchObject({ status: TicketStatus.COMPLETED, cancelledAt: null, cancellationReason: null, duplicateKey: null, assigneeId: support.id });
+        expect(completed.completedAt).toBeInstanceOf(Date);
+        expect((await createTestTicket(reporter, { room: "COMPLETE-MUTATION" })).id).not.toBe(ticket.id);
+    });
+
     it("Idempotency-Key reproduce el éxito y una clave concurrente crea un solo evento", async () => {
         const reporter = await createTestUser();
         const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
@@ -501,6 +536,254 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect((await change("HIGH")).body.error.code).toBe("TICKET_NOT_ACTIVE");
     });
 
+    it("crea bitácora y participantes atómicamente con snapshots históricos del ticket", async () => {
+        const reporter = await createTestUser({ fullName: "Reportero Original", phone: "6641234567" });
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const first = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE], fullName: "Técnica Uno" });
+        const second = await createTestUser({ role: Role.ADMIN, fullName: "Admin Participante" });
+        const ticket = await createTestTicket(reporter, { title: "Título original", room: "ACTIVITY-SNAPSHOT" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        await prisma.user.update({ where: { id: reporter.id }, data: {
+            email: `actualizado-${reporter.id}@uabc.edu.mx`, fullName: "Nombre actual", phone: "6647654321",
+        } });
+        const response = await postActivityLog(manager, activityBody(ticket.id, [second.id, first.id]));
+        expect(response.status).toBe(201);
+        expect(response.body.data).toMatchObject({
+            ticket: { id: ticket.id, code: ticket.code, title: "Título original" },
+            failure: "Proyectores — Conexión",
+            reporter: { fullName: "Reportero Original", email: reporter.email, phone: "6641234567" },
+            participants: [{ id: second.id }, { id: first.id }],
+            timeSpentMinutes: 90, status: "IN_PROGRESS", createdBy: { id: manager.id },
+        });
+        expect(await prisma.activityParticipant.count({ where: { activityLogId: response.body.data.id } })).toBe(2);
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { title: "Título cambiado después" } });
+        const detail = await request(app).get(`/api/v1/activity-log/${response.body.data.id}`).set("Cookie", cookie(second));
+        expect(detail.body.data.ticket.title).toBe("Título original");
+    });
+
+    it("valida permisos, área del ticket, estado permitido y participantes", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const outsideManager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.SOFTWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const userParticipant = await createTestUser();
+        const inactiveParticipant = await createTestUser({ role: Role.SUPPORT });
+        await prisma.user.update({ where: { id: inactiveParticipant.id }, data: { isActive: false } });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-RULES" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const body = activityBody(ticket.id, [support.id]);
+        expect((await postActivityLog(support, body)).body.error.code).toBe("FORBIDDEN");
+        expect((await postActivityLog(reporter, body)).body.error.code).toBe("FORBIDDEN");
+        expect((await postActivityLog(outsideManager, body)).body.error.code).toBe("TICKET_OUTSIDE_SUPPORT_AREA");
+        expect((await postActivityLog(manager, { ...body, ticketId: randomUUID() })).body.error.code).toBe("TICKET_NOT_FOUND");
+        expect((await postActivityLog(manager, { ...body, activity: "  " })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, participantIds: [] })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, participantIds: [support.id, support.id] })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, participantIds: [randomUUID()] })).body.error.code).toBe("PARTICIPANT_NOT_FOUND");
+        expect((await postActivityLog(manager, { ...body, participantIds: [inactiveParticipant.id] })).body.error.code).toBe("PARTICIPANT_INACTIVE");
+        expect((await postActivityLog(manager, { ...body, participantIds: [userParticipant.id] })).body.error.code).toBe("INVALID_ACTIVITY_PARTICIPANT_ROLE");
+        expect((await postActivityLog(manager, { ...body, timeSpentMinutes: 0 })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, serviceEndedAt: new Date(Date.now() - 7_200_000).toISOString() })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, status: "COMPLETED" })).status).toBe(422);
+        expect((await postActivityLog(manager, { ...body, status: "CANCELLED" })).status).toBe(422);
+        expect(await prisma.activityLog.count()).toBe(0);
+        expect((await postActivityLog(manager, { ...body, ticketId: (await createTestTicket(reporter, { categoryId: hardwareId, subcategoryId: hardwareSubId, room: "ACTIVITY-OTHER-AREA" })).id })).body.error.code).toBe("TICKET_STATE_NOT_ALLOWED_FOR_ACTIVITY");
+    });
+
+    it("solo permite crear actividad sobre tickets IN_PROGRESS o COMPLETED", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-COMPLETE-TICKET" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.COMPLETED } });
+        const response = await postActivityLog(manager, activityBody(ticket.id, [support.id], {
+            status: "COMPLETED", serviceEndedAt: new Date().toISOString(),
+        }));
+        expect(response.status).toBe(201);
+        const cancelled = await createTestTicket(reporter, { room: "ACTIVITY-CANCELLED-TICKET" });
+        await prisma.ticket.update({ where: { id: cancelled.id }, data: { status: TicketStatus.CANCELLED } });
+        expect((await postActivityLog(manager, activityBody(cancelled.id, [support.id]))).body.error.code).toBe("TICKET_STATE_NOT_ALLOWED_FOR_ACTIVITY");
+    });
+
+    it("lista por área con filtros de participantes, estado, búsqueda, rango y paginación", async () => {
+        const reporterA = await createTestUser({ fullName: "Reportero TerminoAzul" });
+        const reporterB = await createTestUser({ fullName: "Reportera TerminoRojo" });
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const hardwareTech = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const networkTech = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.NETWORKS] });
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const firstTicket = await createTestTicket(reporterA, { room: "ACTIVITY-LIST-A", title: "Título TerminoVerde" });
+        const secondTicket = await createTestTicket(reporterB, { categoryId: otherCategoryId, subcategoryId: otherSubId, room: "ACTIVITY-LIST-B", title: "Título TerminoMorado" });
+        await prisma.ticket.updateMany({ where: { id: { in: [firstTicket.id, secondTicket.id] } }, data: { status: TicketStatus.IN_PROGRESS } });
+        const start = new Date(Date.now() - 60 * 60 * 1000);
+        const first = await postActivityLog(manager, activityBody(firstTicket.id, [hardwareTech.id], { serviceStartedAt: start.toISOString(), activity: "Revisión búsqueda TerminoNaranja" }));
+        const second = await postActivityLog(admin, activityBody(secondTicket.id, [networkTech.id], { serviceStartedAt: new Date(start.getTime() + 1000).toISOString(), activity: "Intervención TerminoNegro" }));
+        expect(first.status).toBe(201);
+        expect(second.status).toBe(201);
+        async function list(user: typeof admin, query = "") {
+            return request(app).get(`/api/v1/activity-log${query}`).set("Cookie", cookie(user));
+        }
+        expect((await list(hardwareTech)).body.meta.total).toBe(1);
+        expect((await list(networkTech)).body.meta.total).toBe(1);
+        expect((await list(admin)).body.meta.total).toBe(2);
+        expect((await list(manager, `?ticketId=${firstTicket.id}`)).body.meta.total).toBe(1);
+        expect((await list(admin, `?technicianId=${hardwareTech.id}`)).body.meta.total).toBe(1);
+        expect((await list(admin, "?status=IN_PROGRESS")).body.meta.total).toBe(2);
+        expect((await list(admin, "?search=terminonaranja")).body.meta.total).toBe(1);
+        expect((await list(admin, "?search=terminoazul")).body.meta.total).toBe(1);
+        expect((await list(admin, `?from=${encodeURIComponent(start.toISOString())}&to=${encodeURIComponent(start.toISOString())}`)).body.meta.total).toBe(1);
+        expect((await list(admin, "?page=2&pageSize=1")).body.meta).toMatchObject({ page: 2, pageSize: 1, total: 2, totalPages: 2 });
+        expect((await list(admin, "?pageSize=101")).status).toBe(422);
+        expect((await list(admin, `?ticketId=${encodeURIComponent("bad-uuid")}`)).status).toBe(422);
+        expect((await list(admin, "?from=2026-10-05&to=2026-10-04")).status).toBe(422);
+        expect((await list(reporterA)).status).toBe(403);
+        expect((await list(admin, "?search=terminomorado")).body.data[0].ticket.title).toBe("Título TerminoMorado");
+        expect((await list(admin)).body.data[0].id).toBe(second.body.data.id);
+    });
+
+    it("detalle valida UUID, existencia, visibilidad; soporte no consulta historial", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const outside = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.NETWORKS] });
+        const outsideManager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.NETWORKS] });
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const technician = await createTestUser({ role: Role.SUPPORT });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-DETAIL" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const created = await postActivityLog(manager, activityBody(ticket.id, [technician.id]));
+        const id = created.body.data.id as string;
+        const detail = (user: typeof support, activityId: string) => request(app).get(`/api/v1/activity-log/${activityId}`).set("Cookie", cookie(user));
+        expect((await detail(support, id)).status).toBe(200);
+        expect((await detail(outside, id)).body.error.code).toBe("FORBIDDEN_ACTIVITY_LOG");
+        expect((await detail(admin, "not-a-uuid")).status).toBe(422);
+        expect((await detail(admin, randomUUID())).body.error.code).toBe("ACTIVITY_LOG_NOT_FOUND");
+        expect((await request(app).get(`/api/v1/activity-log/${id}/history`).set("Cookie", cookie(support))).status).toBe(403);
+        expect((await request(app).get(`/api/v1/activity-log/${id}/history`).set("Cookie", cookie(outsideManager))).body.error.code).toBe("FORBIDDEN_ACTIVITY_LOG");
+    });
+
+    it("PATCH serializa snapshots canónicos, reemplaza participantes y omite revisiones sin cambios", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const replacement = await createTestUser({ role: Role.SUB_MANAGER });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-PATCH" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const initial = await postActivityLog(manager, activityBody(ticket.id, [support.id]));
+        const id = initial.body.data.id as string;
+        const end = new Date().toISOString();
+        const patchBody = { activity: "Diagnóstico corregido", participantIds: [replacement.id, support.id], serviceEndedAt: end, timeSpentMinutes: 120, status: "COMPLETED" };
+        const changed = await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send(patchBody);
+        expect(changed.status).toBe(200);
+        expect(changed.body.data).toMatchObject({ activity: patchBody.activity, status: "COMPLETED", timeSpentMinutes: 120 });
+        expect(await prisma.activityParticipant.count({ where: { activityLogId: id } })).toBe(2);
+        const revisions = await prisma.activityLogRevision.findMany({ where: { activityLogId: id }, orderBy: { createdAt: "asc" } });
+        expect(revisions).toHaveLength(1);
+        expect(revisions[0]?.previousData).toMatchObject({ activity: "Diagnóstico de conectividad y revisión de cableado.", participantIds: [support.id], status: "IN_PROGRESS" });
+        expect(revisions[0]?.newData).toMatchObject({ activity: "Diagnóstico corregido", participantIds: [support.id, replacement.id].sort(), serviceEndedAt: end, timeSpentMinutes: 120, status: "COMPLETED" });
+        expect(revisions[0]?.changedById).toBe(manager.id);
+        const unchanged = await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(admin)).send({
+            activity: patchBody.activity, participantIds: [...patchBody.participantIds].reverse(), serviceStartedAt: changed.body.data.serviceStartedAt,
+            serviceEndedAt: end, timeSpentMinutes: 120, status: "COMPLETED",
+        });
+        expect(unchanged.status).toBe(200);
+        expect(await prisma.activityLogRevision.count({ where: { activityLogId: id } })).toBe(1);
+        expect((await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(support)).send({ activity: "No" })).status).toBe(403);
+        expect((await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ status: "COMPLETED", serviceEndedAt: null })).status).toBe(422);
+        expect((await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ ticketId: randomUUID() })).status).toBe(422);
+        expect((await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ reporterNameSnapshot: "Falsificado" })).status).toBe(422);
+        expect((await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ serviceStartedAt: new Date(Date.now() + 10000).toISOString() })).status).toBe(422);
+        const history = await request(app).get(`/api/v1/activity-log/${id}/history`).set("Cookie", cookie(admin));
+        expect(history.body.data).toHaveLength(1);
+        expect(history.body.data[0]).toMatchObject({ changedBy: { id: manager.id }, previousData: revisions[0]?.previousData, newData: revisions[0]?.newData });
+    });
+
+    it("dos PATCH concurrentes conservan una cadena revisionada sin previousData repetidos", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-CONCURRENT" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const initial = await postActivityLog(manager, activityBody(ticket.id, [support.id]));
+        const id = initial.body.data.id as string;
+        const path = `/api/v1/activity-log/${id}`;
+        const responses = await Promise.all([
+            request(app).patch(path).set("Cookie", cookie(manager)).send({ activity: "Primer cambio concurrente" }),
+            request(app).patch(path).set("Cookie", cookie(manager)).send({ timeSpentMinutes: 140 }),
+        ]);
+        expect(responses.map((response) => response.status)).toEqual([200, 200]);
+        const history = await request(app).get(`${path}/history`).set("Cookie", cookie(manager));
+        expect(history.status).toBe(200);
+        expect(history.body.data).toHaveLength(2);
+        const [first, second] = history.body.data as Array<{ previousData: Record<string, unknown>; newData: Record<string, unknown> }>;
+        expect(first?.previousData).toMatchObject({ activity: "Diagnóstico de conectividad y revisión de cableado.", timeSpentMinutes: 90 });
+        expect(second?.previousData).toEqual(first?.newData);
+        expect(second?.newData).toMatchObject({ activity: "Primer cambio concurrente", timeSpentMinutes: 140 });
+    });
+
+    it("revierte ActivityLogRevision y cambios si falla el UPDATE de bitácora", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-ROLLBACK-LOG" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const created = await postActivityLog(manager, activityBody(ticket.id, [support.id]));
+        const id = created.body.data.id as string;
+        await prisma.$executeRawUnsafe(`CREATE FUNCTION test_activity_log_reject_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test activity update failure'; END; $$`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_activity_log_reject_update BEFORE UPDATE ON "ActivityLog" FOR EACH ROW EXECUTE FUNCTION test_activity_log_reject_update()`);
+        try {
+            const response = await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ activity: "No debe persistir" });
+            expect(response.status).toBe(500);
+            expect((await prisma.activityLog.findUniqueOrThrow({ where: { id } })).activity).toBe("Diagnóstico de conectividad y revisión de cableado.");
+            expect(await prisma.activityLogRevision.count({ where: { activityLogId: id } })).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_activity_log_reject_update ON "ActivityLog"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_activity_log_reject_update()`);
+        }
+    });
+
+    it("revierte la creación de ActivityLog cuando falla la relación de un participante", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-ROLLBACK-CREATE" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        await prisma.$executeRawUnsafe(`CREATE FUNCTION test_activity_participant_reject_create() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test participant create failure'; END; $$`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_activity_participant_reject_create BEFORE INSERT ON "ActivityParticipant" FOR EACH ROW EXECUTE FUNCTION test_activity_participant_reject_create()`);
+        try {
+            const response = await postActivityLog(manager, activityBody(ticket.id, [support.id]));
+            expect(response.status).toBe(500);
+            expect(await prisma.activityLog.count()).toBe(0);
+            expect(await prisma.activityParticipant.count()).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_activity_participant_reject_create ON "ActivityParticipant"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_activity_participant_reject_create()`);
+        }
+    });
+
+    it("revierte revisión y participantes si falla la sincronización de participantes", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT });
+        const replacement = await createTestUser({ role: Role.ADMIN });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-ROLLBACK-PARTICIPANT" });
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.IN_PROGRESS } });
+        const created = await postActivityLog(manager, activityBody(ticket.id, [support.id]));
+        const id = created.body.data.id as string;
+        await prisma.$executeRawUnsafe(`CREATE FUNCTION test_activity_participant_reject_insert() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test participant failure'; END; $$`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_activity_participant_reject_insert BEFORE INSERT ON "ActivityParticipant" FOR EACH ROW EXECUTE FUNCTION test_activity_participant_reject_insert()`);
+        try {
+            const response = await request(app).patch(`/api/v1/activity-log/${id}`).set("Cookie", cookie(manager)).send({ participantIds: [replacement.id] });
+            expect(response.status).toBe(500);
+            expect(await prisma.activityParticipant.findMany({ where: { activityLogId: id } })).toMatchObject([{ userId: support.id }]);
+            expect(await prisma.activityLogRevision.count({ where: { activityLogId: id } })).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_activity_participant_reject_insert ON "ActivityParticipant"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_activity_participant_reject_insert()`);
+        }
+    });
+
     it("Ticket se revierte cuando falla la inserción del evento CREATED", async () => {
         const user = await createTestUser();
         if (!safe) throw new Error("La base de test no fue verificada.");
@@ -514,6 +797,24 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         } finally {
             await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_event ON "TicketEvent"`);
             await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_event()`);
+        }
+    });
+
+    it("estado y evento se revierten juntos si falla la inserción del evento", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter);
+        await request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support));
+        await prisma.$executeRawUnsafe(`CREATE FUNCTION test_core_reject_mutation_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."type" = 'STATUS_CHANGED' THEN RAISE EXCEPTION 'test mutation event failure'; END IF; RETURN NEW; END; $$`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_core_reject_mutation_event BEFORE INSERT ON "TicketEvent" FOR EACH ROW EXECUTE FUNCTION test_core_reject_mutation_event()`);
+        try {
+            const response = await request(app).patch(`/api/v1/tickets/${ticket.id}/status`).set("Cookie", cookie(support)).send({ status: "IN_REVIEW" });
+            expect(response.status).toBe(500);
+            expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).status).toBe(TicketStatus.OPEN);
+            expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "STATUS_CHANGED" } })).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_mutation_event ON "TicketEvent"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_mutation_event()`);
         }
     });
 

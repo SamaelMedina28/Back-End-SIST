@@ -29,6 +29,8 @@ import {
     CatalogRepositoryNotFound,
 } from "../../src/modules/category/category.types.js";
 import type { TicketRepository } from "../../src/modules/ticket/ticket.types.js";
+import type { ActivityLogRepository } from "../../src/modules/activity-log/activity-log.types.js";
+import type { InventoryRepository } from "../../src/modules/inventory/inventory.types.js";
 
 export class FakeTicketRepository implements TicketRepository {
     private unused(): never { throw new Error("FakeTicketRepository: ticket method was not configured for this test"); }
@@ -37,6 +39,25 @@ export class FakeTicketRepository implements TicketRepository {
     async list(): Promise<never> { return this.unused(); }
     async findById(): Promise<null> { return this.unused(); }
     async events(): Promise<never> { return this.unused(); }
+}
+
+export class FakeActivityLogRepository implements ActivityLogRepository {
+    private unused(): never { throw new Error("FakeActivityLogRepository: activity-log method was not configured for this test"); }
+    async createWithLockedTicket<T>(): Promise<T> { return this.unused(); }
+    async list(): Promise<never> { return this.unused(); }
+    async findById(): Promise<null> { return this.unused(); }
+    async withLockedActivityLog<T>(): Promise<T> { return this.unused(); }
+    async history(): Promise<never> { return this.unused(); }
+}
+
+export class FakeInventoryRepository implements InventoryRepository {
+    private unused(): never { throw new Error("FakeInventoryRepository: inventory method was not configured for this test"); }
+    async create(): Promise<never> { return this.unused(); }
+    async list(): Promise<never> { return this.unused(); }
+    async findById(): Promise<null> { return this.unused(); }
+    async patchLocked<T>(): Promise<T> { return this.unused(); }
+    async softDelete(): Promise<boolean> { return this.unused(); }
+    async listTickets(): Promise<never> { return this.unused(); }
 }
 
 export const testConfig: AppConfig = {

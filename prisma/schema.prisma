@@ -195,6 +195,7 @@ model Ticket {
   @@index([assigneeId, status])
   @@index([reporterId, status])
   @@index([categoryId, status])
+  @@index([inventoryItemId, createdAt(sort: Desc), id])
 }
 
 model TicketEvent {
@@ -239,6 +240,7 @@ model ActivityLog {
   @@index([ticketId])
   @@index([createdById])
   @@index([status, createdAt])
+  @@index([serviceStartedAt(sort: Desc), createdAt(sort: Desc), id])
 }
 
 model ActivityParticipant {

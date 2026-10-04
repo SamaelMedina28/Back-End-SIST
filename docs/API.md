@@ -284,3 +284,73 @@ await api(`/catalog/support-suggestions?categoryId=${categoryId}&subcategoryId=$
 ```
 
 La gestión de categorías/subcategorías requiere `ADMIN`; los usuarios ordinarios solo consultan el catálogo activo.
+
+## Bitácora y auditoría
+
+Los estados de una actividad son `IN_PROGRESS` y `COMPLETED`. El ticket relacionado debe estar `IN_PROGRESS` o `COMPLETED`. Los snapshots de ticket y reportero los genera el backend desde el ticket; las actualizaciones posteriores del ticket no los sincronizan.
+
+### `GET /api/v1/activity-log`
+
+Roles: `SUPPORT`, `SUB_MANAGER`, `ADMIN`. SUPPORT y SUB_MANAGER solo ven tickets de sus `supportAreas`; ADMIN ve todos. Los filtros siempre restringen ese ámbito. Query: `page` (1), `pageSize` (20, máximo 100), `ticketId`, `technicianId` (ActivityParticipant.userId), `status` (`IN_PROGRESS`/`COMPLETED`), `search`, `from`, `to`. Search es case-insensitive sobre código/título/falla/reportero snapshot y actividad. El rango inclusivo filtra `serviceStartedAt`; acepta ISO DateTime con zona o `YYYY-MM-DD` (UTC completo para la fecha final). `from > to`, UUID inválido, status inválido o pageSize mayor a 100 producen `422 VALIDATION_ERROR`.
+
+```ts
+const response = await fetch(`${API_URL}/api/v1/activity-log?page=1&pageSize=20&status=IN_PROGRESS`, { credentials: "include" });
+const envelope = await response.json();
+if (!response.ok) throw new Error(envelope.error.message);
+const { data, meta } = envelope;
+```
+
+### `POST /api/v1/activity-log`
+
+Roles: `SUB_MANAGER` (solo sus áreas) y `ADMIN` (cualquier área). Body estricto:
+
+```json
+{
+  "ticketId": "UUID",
+  "activity": "Diagnóstico de conectividad y revisión de cableado.",
+  "participantIds": ["UUID"],
+  "serviceStartedAt": "2026-10-04T17:00:00.000Z",
+  "serviceEndedAt": null,
+  "timeSpentMinutes": 90,
+  "status": "IN_PROGRESS"
+}
+```
+
+Se exige al menos un participante único, activo y con rol SUPPORT/SUB_MANAGER/ADMIN; no se restringe el área del participante. `timeSpentMinutes` es entero positivo de tiempo efectivo, no se calcula desde las fechas. COMPLETED requiere `serviceEndedAt`; si existe, no puede preceder a `serviceStartedAt`. La actividad se inserta con sus participantes y snapshots en una transacción. Errores: `403 TICKET_OUTSIDE_SUPPORT_AREA`; `404 TICKET_NOT_FOUND` / `PARTICIPANT_NOT_FOUND`; `409 TICKET_STATE_NOT_ALLOWED_FOR_ACTIVITY`, `PARTICIPANT_INACTIVE`, `INVALID_ACTIVITY_PARTICIPANT_ROLE`; `422 VALIDATION_ERROR`.
+
+```ts
+const activityLog = await api("/activity-log", {
+  method: "POST",
+  body: JSON.stringify({ ticketId, activity: "Diagnóstico y revisión de cableado.", participantIds: [technicianId],
+    serviceStartedAt: new Date().toISOString(), serviceEndedAt: null, timeSpentMinutes: 90, status: "IN_PROGRESS" }),
+});
+```
+
+### `GET /api/v1/activity-log/:id`
+
+Roles: `SUPPORT`, `SUB_MANAGER`, `ADMIN`, con visibilidad por área. Devuelve ticket y snapshots, reportero histórico, actividad, participantes, fechas, tiempo, estado, creador y timestamps. Errores: `403 FORBIDDEN_ACTIVITY_LOG`, `404 ACTIVITY_LOG_NOT_FOUND`, `422 VALIDATION_ERROR`.
+
+```ts
+const entry = await api(`/activity-log/${activityId}`);
+```
+
+### `PATCH /api/v1/activity-log/:id`
+
+Roles: `SUB_MANAGER` (dentro del área) y `ADMIN`. Body parcial estricto; solo permite `activity`, `participantIds`, `serviceStartedAt`, `serviceEndedAt`, `timeSpentMinutes`, `status`. No permite cambiar ticket ni snapshots. Se revalidan los valores combinados; cada cambio real crea revisión en la misma transacción. Un body que no cambia el estado devuelve el detalle actual sin revisión ni cambio de `updatedAt`. Errores: `403 FORBIDDEN_ACTIVITY_LOG`, `404 ACTIVITY_LOG_NOT_FOUND` / `PARTICIPANT_NOT_FOUND`, `409 PARTICIPANT_INACTIVE` / `INVALID_ACTIVITY_PARTICIPANT_ROLE`, `422 VALIDATION_ERROR`.
+
+```ts
+const updated = await api(`/activity-log/${activityId}`, {
+  method: "PATCH",
+  body: JSON.stringify({ activity: "Diagnóstico y sustitución de cableado.", timeSpentMinutes: 120 }),
+});
+```
+
+### `GET /api/v1/activity-log/:id/history`
+
+Solo `SUB_MANAGER` y `ADMIN`, con la misma visibilidad por área. Devuelve revisiones append-only en orden `createdAt ASC`, con `changedBy`, `previousData` y `newData` canónicos (incluidos `participantIds` ordenados). No existe API para crear, editar o eliminar revisiones. Errores: `403 FORBIDDEN_ACTIVITY_LOG`, `404 ACTIVITY_LOG_NOT_FOUND`, `422 VALIDATION_ERROR`.
+
+```ts
+const history = await api(`/activity-log/${activityId}/history`);
+```
+
+No existe `DELETE /api/v1/activity-log/:id`; las correcciones se realizan mediante PATCH y quedan auditadas.

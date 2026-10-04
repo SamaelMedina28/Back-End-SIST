@@ -314,3 +314,51 @@ if (!response.ok) {
 - `409 ACTIVE_TICKET_LIMIT_REACHED`: indica que el usuario alcanzó diez tickets activos.
 - `409 TICKET_PRIORITY_NOT_CONFIGURED`: pide elegir otra categoría o avisar a ADMIN para configurarla.
 - `422 VALIDATION_ERROR`: presenta `error.fields` junto a los campos del formulario; la descripción admite máximo 50 palabras.
+
+## Bitácora de servicio (D10/D11)
+
+Permisos: `SUPPORT` consulta; `SUB_MANAGER` consulta, registra y modifica dentro de sus áreas; `ADMIN` consulta, registra y modifica todas las áreas. `USER` recibe 403. No hay eliminación de entradas. El historial solo está disponible para `SUB_MANAGER` y `ADMIN`.
+
+El formulario de D11 envía ticket, actividad, participantes, inicio, fin opcional, tiempo efectivo y estado. No envíes los snapshots ni el creador. El ticket debe estar `IN_PROGRESS` o `COMPLETED`; una actividad solo admite `IN_PROGRESS` o `COMPLETED`. Para COMPLETED exige fecha final. Los minutos representan dedicación efectiva y no se calculan a partir del intervalo.
+
+```ts
+const response = await fetch(`${API_URL}/api/v1/activity-log?page=1&pageSize=20`, {
+  credentials: "include",
+});
+const envelope = await response.json();
+if (!response.ok) throw new ApiError(envelope.error.code, envelope.error.message, envelope.error.fields);
+const { data, meta } = envelope;
+```
+
+```ts
+await api("/activity-log", {
+  method: "POST",
+  body: JSON.stringify({
+    ticketId,
+    activity: "Diagnóstico y revisión de cableado.",
+    participantIds: [technicianId],
+    serviceStartedAt: new Date().toISOString(),
+    serviceEndedAt: null,
+    timeSpentMinutes: 90,
+    status: "IN_PROGRESS",
+  }),
+});
+```
+
+Para filtrar D10, usa los query params `ticketId`, `technicianId` (participante, no creador), `status`, `search`, `from`, `to`, `page` y `pageSize`. `search` incluye código, título, falla, reportero snapshot y texto de actividad. `from/to` se aplican a `serviceStartedAt`; una fecha `YYYY-MM-DD` en `to` incluye el día UTC completo.
+
+```ts
+await api(`/activity-log/${activityId}`);
+
+await api(`/activity-log/${activityId}`, {
+  method: "PATCH",
+  body: JSON.stringify({
+    activity: "Diagnóstico y sustitución de cableado.",
+    timeSpentMinutes: 120,
+  }),
+});
+
+const history = await api(`/activity-log/${activityId}/history`);
+```
+
+La respuesta incluye ticket, falla y datos del reportero desde snapshots históricos, participantes, fechas, minutos, estado y creador. Cada PATCH que cambia datos genera una revisión inmutable; PATCH sin cambios no genera auditoría. No sincronices snapshots si luego cambia el ticket: cada entrada conserva el contexto con el que se registró.

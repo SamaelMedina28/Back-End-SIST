@@ -2020,6 +2020,10 @@ Prisma:
 
 El contrato permite cancelación según permisos definidos por backend, pero no establece matriz de transición ni condición de propiedad/asignación para cambios de estado. Para esta etapa se adopta la siguiente política de implementación: `ADMIN` puede cambiar tickets de cualquier área; `SUPPORT` y `SUB_MANAGER` solo pueden cambiar tickets activos asignados a sí mismos y pertenecientes a una de sus áreas. Se permiten exactamente las transiciones `OPEN → IN_REVIEW`, `OPEN → IN_PROGRESS`, `IN_REVIEW → IN_PROGRESS`, `IN_PROGRESS → COMPLETED`, y de cualquiera de los estados activos `OPEN`, `IN_REVIEW`, `IN_PROGRESS` a `CANCELLED`. Los terminales no cambian. Cancelar requiere una nota. Esta aclaración concreta el permiso pendiente sin cambiar nombres, formatos ni campos normativos de los endpoints anteriores.
 
+### Aclaración de implementación — Etapa 6 (2026-10-04)
+
+El contrato define roles, filtros y campos generales de ActivityLog, pero no fija el ámbito por supportArea, el enum de estados de actividad ni el campo temporal usado por `from/to`. Para esta etapa: SUPPORT y SUB_MANAGER leen solo entradas de tickets en sus áreas; SUB_MANAGER también crea/modifica únicamente dentro de esas áreas; ADMIN opera globalmente. El historial permanece limitado a SUB_MANAGER/ADMIN, tal como indica el contrato. Los estados de actividad admitidos por la API son `IN_PROGRESS` y `COMPLETED` (sin cambiar el enum persistido existente); un ticket admite registrar trabajo cuando está `IN_PROGRESS` o `COMPLETED`. `from/to` filtran `serviceStartedAt`; una fecha simple `YYYY-MM-DD` representa el inicio UTC del día para `from` y el final UTC del día para `to`. No se exige coincidencia de área entre participante y ticket porque el contrato/prompt no la exigen. Estas aclaraciones concretan la implementación sin modificar endpoints ni campos contractuales.
+
 No usar any salvo que sea absolutamente necesario.
 
 Utilizar TypeScript strict.

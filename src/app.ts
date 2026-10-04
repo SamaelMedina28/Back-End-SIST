@@ -9,6 +9,8 @@ import { requestLoggerMiddleware } from "./middlewares/request-logger.middleware
 import type { GoogleIdentityProvider, UserRepository } from "./modules/auth/auth.types.js";
 import type { CatalogRepository } from "./modules/category/category.types.js";
 import type { TicketRepository } from "./modules/ticket/ticket.types.js";
+import type { ActivityLogRepository } from "./modules/activity-log/activity-log.types.js";
+import type { InventoryRepository } from "./modules/inventory/inventory.types.js";
 import swaggerUi from "swagger-ui-express";
 import { HealthController } from "./modules/health/health.controller.js";
 import { createApiRouter } from "./routes/index.js";
@@ -19,6 +21,8 @@ export interface AppDependencies {
     users: UserRepository;
     catalog: CatalogRepository;
     tickets: TicketRepository;
+    activityLogs: ActivityLogRepository;
+    inventory: InventoryRepository;
     google: GoogleIdentityProvider;
     checkDatabase: () => Promise<void>;
 }
@@ -61,6 +65,8 @@ export function createApp(dependencies: AppDependencies): Application {
         users: dependencies.users,
         catalog: dependencies.catalog,
         tickets: dependencies.tickets,
+        activityLogs: dependencies.activityLogs,
+        inventory: dependencies.inventory,
         google: dependencies.google,
     }));
 

@@ -19,12 +19,22 @@ import type { TicketRepository } from "../modules/ticket/ticket.types.js";
 import { TicketService } from "../modules/ticket/ticket.service.js";
 import { TicketController } from "../modules/ticket/ticket.controller.js";
 import { createTicketRouter } from "../modules/ticket/ticket.routes.js";
+import type { ActivityLogRepository } from "../modules/activity-log/activity-log.types.js";
+import { ActivityLogService } from "../modules/activity-log/activity-log.service.js";
+import { ActivityLogController } from "../modules/activity-log/activity-log.controller.js";
+import { createActivityLogRouter } from "../modules/activity-log/activity-log.routes.js";
+import type { InventoryRepository } from "../modules/inventory/inventory.types.js";
+import { InventoryService } from "../modules/inventory/inventory.service.js";
+import { InventoryController } from "../modules/inventory/inventory.controller.js";
+import { createInventoryRouter } from "../modules/inventory/inventory.routes.js";
 
 export function createApiRouter(input: {
     config: AppConfig;
     users: UserRepository;
     catalog: CatalogRepository;
     tickets: TicketRepository;
+    activityLogs: ActivityLogRepository;
+    inventory: InventoryRepository;
     google: GoogleIdentityProvider;
 }): ExpressRouter {
     const router = Router();
@@ -39,6 +49,8 @@ export function createApiRouter(input: {
     const categoryController = new CategoryController(new CategoryService(input.catalog));
     const catalogController = new CatalogController(new CatalogService(input.catalog));
     const ticketController = new TicketController(new TicketService(input.tickets, input.catalog));
+    const activityLogController = new ActivityLogController(new ActivityLogService(input.activityLogs));
+    const inventoryController = new InventoryController(new InventoryService(input.inventory));
 
     router.use("/auth", createAuthRouter({
         controller: authController,
@@ -72,6 +84,18 @@ export function createApiRouter(input: {
     }));
     router.use("/tickets", createTicketRouter({
         controller: ticketController,
+        users: input.users,
+        sessions,
+        config: input.config,
+    }));
+    router.use("/activity-log", createActivityLogRouter({
+        controller: activityLogController,
+        users: input.users,
+        sessions,
+        config: input.config,
+    }));
+    router.use("/inventory", createInventoryRouter({
+        controller: inventoryController,
         users: input.users,
         sessions,
         config: input.config,

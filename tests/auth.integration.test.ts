@@ -23,6 +23,8 @@ import {
     FakeGoogleProvider,
     FakeCatalogRepository,
     FakeTicketRepository,
+    FakeActivityLogRepository,
+    FakeInventoryRepository,
     FakeUserRepository,
     makeCategory,
     makeSubcategory,
@@ -52,6 +54,8 @@ function createContext(input: {
         users,
         catalog,
         tickets: new FakeTicketRepository(),
+        activityLogs: new FakeActivityLogRepository(),
+        inventory: new FakeInventoryRepository(),
         google,
         checkDatabase: input.checkDatabase ?? (async () => undefined),
     });
@@ -193,6 +197,8 @@ describe("OAuth flow", () => {
             users,
             catalog: new FakeCatalogRepository(),
             tickets: new FakeTicketRepository(),
+            activityLogs: new FakeActivityLogRepository(),
+            inventory: new FakeInventoryRepository(),
             google: new GoogleOAuthProvider(testConfig),
             checkDatabase: async () => undefined,
         });
@@ -902,7 +908,7 @@ describe("OpenAPI and Swagger UI", () => {
         await SwaggerParser.validate(openApiDocument as never);
     });
 
-    it("documents all four Tickets Core operations", async () => {
+    it("documents ticket and Activity Log operations", async () => {
         const { app } = createContext();
         const response = await request(app).get("/api/openapi.json").expect(200);
         expect(response.body.paths["/api/v1/categories/{id}"].patch).toBeDefined();
@@ -912,6 +918,12 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.body.paths["/api/v1/tickets"].get).toBeDefined();
         expect(response.body.paths["/api/v1/tickets/{id}"].get).toBeDefined();
         expect(response.body.paths["/api/v1/tickets/{id}/events"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log"].post).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log/{id}"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log/{id}"].patch).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log/{id}/history"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/activity-log/{id}"].delete).toBeUndefined();
     });
 
     it("serves Swagger UI at /api/docs", async () => {

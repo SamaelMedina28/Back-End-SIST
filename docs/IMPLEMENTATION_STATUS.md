@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 5: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 6: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -33,8 +33,11 @@
 | Autoasignación y asignación administrativa | DONE | 3/13 | PostgreSQL real: concurrencia, área, idempotencia de asignación y eventos |
 | Estados, prioridad e idempotencia | DONE | 2/13 | PostgreSQL real: permisos, transiciones, cierre, replay/conflicto y prioridad |
 | Dashboard | NOT_STARTED | 0/1 | 0 |
-| Bitácora de actividad | NOT_STARTED | 0/5 | 0 |
-| Auditoría de bitácora | NOT_STARTED | Incluido en bitácora | 0 |
+| Activity Log lectura, filtros y detalle | DONE | 2/5 | PostgreSQL real: RBAC, áreas, filtros, búsqueda, fechas y paginación |
+| Activity Log creación y snapshots | DONE | 1/5 | PostgreSQL real: ticket, estados, participantes, transacción y snapshots históricos |
+| Activity Log actualización | DONE | 1/5 | PostgreSQL real: validación combinada, no-op, participantes y PATCH concurrentes |
+| Auditoría ActivityLogRevision | DONE | 1/5 | PostgreSQL real: snapshots canónicos, actor, orden y rollback; append-only por API |
+| Tests PostgreSQL de Activity Log | DONE | Incluidos en la suite Tickets Core | Creación, lectura, actualización, auditoría, concurrencia y rollback |
 | Inventario | NOT_STARTED | 0/7 | 0 |
 | Miembros de soporte | NOT_STARTED | 0/5 | 0 |
 | Reportes | NOT_STARTED | 0/1 | 0 |
@@ -71,6 +74,11 @@
 - `DELETE /api/v1/tickets/:id/assignee`
 - `PATCH /api/v1/tickets/:id/status`
 - `PATCH /api/v1/tickets/:id/priority`
+- `GET /api/v1/activity-log`
+- `POST /api/v1/activity-log`
+- `GET /api/v1/activity-log/:id`
+- `PATCH /api/v1/activity-log/:id`
+- `GET /api/v1/activity-log/:id/history`
 - `GET /api/v1/categories`
 - `POST /api/v1/categories`
 - `PATCH /api/v1/categories/:id`
@@ -90,12 +98,12 @@
 - `sameSite` queda en `lax`, adecuado para el redirect OAuth de nivel superior. `secure` se habilita en producción.
 - La cookie temporal de OAuth se elimina antes de procesar el callback, de modo que el navegador no la conserva para una reutilización normal. No se añadió Redis ni otra persistencia de challenges porque esta etapa permite explícitamente una cookie HTTP-only temporal.
 - La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
-- No se implementó OpenAPI en esta etapa porque no existía una estructura previa reutilizable y el alcance lo declaró opcional.
-- No se implementaron endpoints de categorías, tickets, bitácora, inventario, dashboard, reportes, SMTP ni worker de notificaciones.
+- En el corte de Etapa 3 OpenAPI aún no se implementaba; quedó implementado y validado en las etapas posteriores.
+- Inventario, miembros de soporte, dashboard, reportes, SMTP y worker de notificaciones siguen fuera de las etapas completadas.
 - Categorías y subcategorías se ordenan por `name ASC, id ASC`; sugerencias por `title ASC, id ASC`. El listado usa una lectura anidada del repositorio Prisma para evitar N+1.
 - `includeInactive=true` está disponible únicamente para ADMIN. Las bajas son lógicas e idempotentes; desactivar categoría no desactiva sus subcategorías.
 - `SupportSuggestion` no recibió seed: no había contenido técnico autorizado para inventar. El endpoint devuelve una lista vacía cuando no hay filas activas.
-- Los tests de etapa 3 usan repositorios en memoria y Supertest; no conectan ni realizan operaciones destructivas en `support_system`. La implementación Prisma aún no tiene una prueba de integración con una base PostgreSQL exclusiva para tests.
+- Los tests de etapas tempranas usaban repositorios en memoria. Desde Tickets Core y Activity Log, la suite también incluye integración Prisma/PostgreSQL aislada en `support_system_test`.
 - Swagger UI se sirve desde la dependencia local en `/api/docs`; la relajación de CSP requerida por sus assets se limita a esa ruta.
 
 ## Etapa 4 implementada
@@ -115,9 +123,14 @@
 - `POST assign-self` serializa solicitudes con `SELECT ... FOR UPDATE`; asignaciones y eventos se guardan de forma atómica.
 - Los cierres COMPLETED/CANCELLED preservan el asignado, liberan `duplicateKey`, guardan timestamps y hacen terminal al ticket. La cancelación requiere nota.
 - Idempotencia persistente y multi-instancia: clave única por actor/scope/key, SHA-256 del payload y replay por 24 horas; no se agregó worker de limpieza.
-- `pnpm test` con `DATABASE_URL_TEST` configurada: pendiente de la validación final de Etapa 5.
-- `pnpm build`: pendiente de la validación final de Etapa 5.
-- `tsc --noEmit`: pendiente de la validación final de Etapa 5.
+- `pnpm test` con `DATABASE_URL_TEST` configurada: 4 archivos y 138 pruebas aprobadas; 47 pruebas funcionales usaron PostgreSQL real, además de 3 guards de base.
+- `pnpm build`: correcto (`tsc`).
+- `pnpm exec prisma validate`: correcto.
+- OpenAPI parseado y validado mediante la suite existente.
+- `git diff --check`: correcto.
+- Etapa 6: migración aditiva únicamente para el índice de rango/orden de bitácora. Modelos `ActivityLog`, `ActivityParticipant` y `ActivityLogRevision` ya existían; no se duplicaron.
+- ActivityLog registra snapshots desde Ticket, participantes verificados y valores de servicio en una transacción. PATCH bloquea la fila con PostgreSQL `FOR UPDATE`; revisión, sincronización de participantes y cambio quedan en la misma transacción.
+- `ActivityLogRevision` registra el estado editable completo, con IDs de participantes ordenados; los no-op no modifican `updatedAt` ni crean revisión. No existe DELETE ni mutador de revisions.
 - No existe login por contraseña ni campo `password` en `User`.
 - No existe secreto JWT predeterminado ni CORS con origen `*`.
 - Los tokens de Google no se persisten; el ID token se verifica y se descarta.
@@ -125,4 +138,4 @@
 
 ## Próxima etapa
 
-La siguiente etapa pendiente es Dashboard. Bitácora, auditoría, inventario, miembros de soporte, reportes y worker de notificaciones continúan sin implementar.
+Inventory API continúa `NOT_STARTED` y es el siguiente módulo pendiente de implementación. Dashboard, miembros de soporte, reportes y worker de notificaciones también siguen pendientes. No se implementaron DELETE de ActivityLog, emails ni recordatorios.

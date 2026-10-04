@@ -72,6 +72,7 @@ export const openApiDocument = {
         { name: "Categories" },
         { name: "Subcategories" },
         { name: "Tickets" },
+        { name: "Activity Log" },
         { name: "System" },
     ],
     paths: {
@@ -406,6 +407,57 @@ export const openApiDocument = {
                 },
             }),
         },
+        "/api/v1/activity-log": {
+            get: operation({
+                summary: "Listar bitácora de servicio",
+                description: "SUPPORT, SUB_MANAGER y ADMIN. SUPPORT/SUB_MANAGER solo consulta actividades de sus áreas. Los filtros reducen ese ámbito. from/to filtran serviceStartedAt; fecha sin hora abarca el día UTC completo.",
+                tags: ["Activity Log"], security: cookieSecurity, roles: ["SUPPORT", "SUB_MANAGER", "ADMIN"],
+                parameters: [
+                    { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+                    { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+                    { name: "ticketId", in: "query", schema: { type: "string", format: "uuid" } },
+                    { name: "technicianId", in: "query", schema: { type: "string", format: "uuid" }, description: "Busca en ActivityParticipant.userId, no createdById." },
+                    { name: "status", in: "query", schema: { type: "string", enum: ["IN_PROGRESS", "COMPLETED"] } },
+                    { name: "search", in: "query", schema: { type: "string" }, description: "Busca sin distinguir mayúsculas en código/título/falla/reportero snapshot y actividad." },
+                    { name: "from", in: "query", schema: { oneOf: [{ type: "string", format: "date-time" }, { type: "string", format: "date" }] }, description: "Inicio inclusivo aplicado a serviceStartedAt; acepta YYYY-MM-DD UTC." },
+                    { name: "to", in: "query", schema: { oneOf: [{ type: "string", format: "date-time" }, { type: "string", format: "date" }] }, description: "Fin inclusivo aplicado a serviceStartedAt; fecha YYYY-MM-DD incluye el día UTC completo." },
+                ],
+                responses: {
+                    200: { description: "Página visible de bitácoras.", content: json({ $ref: "#/components/schemas/PaginatedActivityLogsResponse" }) },
+                    ...errorResponses([401, 403, 422]),
+                },
+            }),
+            post: operation({
+                summary: "Registrar actividad de servicio",
+                description: "SUB_MANAGER crea dentro de sus áreas; ADMIN puede crear sobre tickets de cualquier área. Snapshots del ticket y del reportero se capturan en la misma transacción que la bitácora y participantes.",
+                tags: ["Activity Log"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/ActivityLogCreateRequest" }) },
+                responses: { 201: successResponse("Actividad creada.", { $ref: "#/components/schemas/ActivityLogDetail" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
+        "/api/v1/activity-log/{id}": {
+            get: operation({
+                summary: "Consultar detalle de bitácora",
+                description: "SUPPORT, SUB_MANAGER y ADMIN. El soporte solo ve entradas cuyo ticket pertenezca a una de sus áreas.",
+                tags: ["Activity Log"], security: cookieSecurity, roles: ["SUPPORT", "SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                responses: { 200: successResponse("Detalle de bitácora.", { $ref: "#/components/schemas/ActivityLogDetail" }), ...errorResponses([401, 403, 404, 422]) },
+            }),
+            patch: operation({
+                summary: "Modificar actividad de servicio",
+                description: "SUB_MANAGER solo dentro de sus áreas; ADMIN en cualquier área. Cada cambio real y su ActivityLogRevision se escriben en una transacción con bloqueo FOR UPDATE. No hay DELETE.",
+                tags: ["Activity Log"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/ActivityLogPatchRequest" }) },
+                responses: { 200: successResponse("Actividad actualizada o sin cambios.", { $ref: "#/components/schemas/ActivityLogDetail" }), ...errorResponses([401, 403, 404, 409, 422]) },
+            }),
+        },
+        "/api/v1/activity-log/{id}/history": {
+            get: operation({
+                summary: "Consultar auditoría de bitácora",
+                description: "Solo SUB_MANAGER y ADMIN, con la misma visibilidad por área. Revisiones append-only ordenadas por createdAt ascendente.",
+                tags: ["Activity Log"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"], parameters: [idParameter],
+                responses: { 200: successResponse("Historial inmutable de cambios.", { type: "array", items: { $ref: "#/components/schemas/ActivityLogRevision" } }), ...errorResponses([401, 403, 404, 422]) },
+            }),
+        },
         "/health": {
             get: operation({
                 summary: "Estado del proceso",
@@ -464,6 +516,47 @@ export const openApiDocument = {
             } },
             TicketPriorityResult: { type: "object", required: ["id", "code", "priority", "updatedAt"], properties: {
                 id: { type: "string", format: "uuid" }, code: { type: "string" }, priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, updatedAt: { type: "string", format: "date-time" },
+            } },
+            ActivityLogCreateRequest: { type: "object", additionalProperties: false,
+                required: ["ticketId", "activity", "participantIds", "serviceStartedAt", "timeSpentMinutes", "status"], properties: {
+                    ticketId: { type: "string", format: "uuid" }, activity: { type: "string", minLength: 1 },
+                    participantIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", format: "uuid" } },
+                    serviceStartedAt: { type: "string", format: "date-time" }, serviceEndedAt: { type: ["string", "null"], format: "date-time" },
+                    timeSpentMinutes: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["IN_PROGRESS", "COMPLETED"] },
+                },
+            },
+            ActivityLogPatchRequest: { type: "object", additionalProperties: false, properties: {
+                activity: { type: "string", minLength: 1 },
+                participantIds: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", format: "uuid" } },
+                serviceStartedAt: { type: "string", format: "date-time" }, serviceEndedAt: { type: ["string", "null"], format: "date-time" },
+                timeSpentMinutes: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["IN_PROGRESS", "COMPLETED"] },
+            } },
+            ActivityLogListItem: { type: "object", required: ["id", "ticket", "failure", "activity", "participants", "serviceStartedAt", "serviceEndedAt", "timeSpentMinutes", "status", "createdAt"], properties: {
+                id: { type: "string", format: "uuid" }, ticket: { $ref: "#/components/schemas/ActivityLogTicket" }, failure: { type: "string" }, activity: { type: "string" },
+                participants: { type: "array", items: { $ref: "#/components/schemas/ActivityLogParticipant" } }, serviceStartedAt: { type: "string", format: "date-time" },
+                serviceEndedAt: { type: ["string", "null"], format: "date-time" }, timeSpentMinutes: { type: "integer" }, status: { type: "string", enum: ["IN_PROGRESS", "COMPLETED"] }, createdAt: { type: "string", format: "date-time" },
+            } },
+            ActivityLogDetail: { allOf: [
+                { $ref: "#/components/schemas/ActivityLogListItem" },
+                { type: "object", required: ["reporter", "createdBy", "updatedAt"], properties: {
+                    reporter: { type: "object", required: ["fullName", "email", "phone"], properties: { fullName: { type: "string" }, email: { type: "string", format: "email" }, phone: { type: ["string", "null"] } } },
+                    createdBy: { $ref: "#/components/schemas/ActivityLogParticipant" }, updatedAt: { type: "string", format: "date-time" },
+                } },
+            ] },
+            ActivityLogTicket: { type: "object", required: ["id", "code", "title"], properties: { id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" } } },
+            ActivityLogParticipant: { type: "object", required: ["id", "fullName"], properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } },
+            ActivityLogRevision: { type: "object", required: ["id", "changedBy", "previousData", "newData", "createdAt"], properties: {
+                id: { type: "string", format: "uuid" }, changedBy: { $ref: "#/components/schemas/ActivityLogParticipant" },
+                previousData: { $ref: "#/components/schemas/ActivityLogRevisionData" }, newData: { $ref: "#/components/schemas/ActivityLogRevisionData" }, createdAt: { type: "string", format: "date-time" },
+            } },
+            ActivityLogRevisionData: { type: "object", required: ["activity", "participantIds", "serviceStartedAt", "serviceEndedAt", "timeSpentMinutes", "status"], properties: {
+                activity: { type: "string" }, participantIds: { type: "array", items: { type: "string", format: "uuid" } },
+                serviceStartedAt: { type: "string", format: "date-time" }, serviceEndedAt: { type: ["string", "null"], format: "date-time" },
+                timeSpentMinutes: { type: "integer" }, status: { type: "string", enum: ["IN_PROGRESS", "COMPLETED"] },
+            } },
+            PaginatedActivityLogsResponse: { type: "object", required: ["success", "data", "meta"], properties: {
+                success: { const: true }, data: { type: "array", items: { $ref: "#/components/schemas/ActivityLogListItem" } },
+                meta: { type: "object", required: ["page", "pageSize", "total", "totalPages"], properties: { page: { type: "integer" }, pageSize: { type: "integer" }, total: { type: "integer" }, totalPages: { type: "integer" } } },
             } },
             StandardSuccessResponse: {
                 type: "object", required: ["success", "data"],
