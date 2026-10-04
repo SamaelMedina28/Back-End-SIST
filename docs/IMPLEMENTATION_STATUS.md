@@ -1,10 +1,15 @@
 # Estado de implementación del backend
 
-> Corte inicial: 2026-10-03. Esta tabla refleja el análisis de esta etapa. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 1.5: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
-|---|---|---|---|
-| Base de API, respuestas y errores | NOT_STARTED | 0/4 fuera de /api/v1; prefijo /api/v1 pendiente | 0 |
+|---|---|---:|---:|
+| Modelo de datos Prisma 7 | DONE | 0 | 0 |
+| Migración inicial del sistema | DONE (aplicada localmente) | 0 | 0 |
+| Seed idempotente de categorías | DONE (probado dos veces) | 0 | 0 |
+| PostgreSQL local reproducible | DONE (PostgreSQL local) | 0 | 0 |
+| Documentación de base de datos | DONE | 0 | 0 |
+| Base de API, respuestas y errores | NOT_STARTED | 0/4 fuera de /api/v1 | 0 |
 | Autenticación Google OAuth y sesión | NOT_STARTED | 0/5 | 0 |
 | Usuarios y perfil propio | NOT_STARTED | 0/1 | 0 |
 | Catálogo de categorías y subcategorías | NOT_STARTED | 0/8 | 0 |
@@ -18,42 +23,45 @@
 | Inventario | NOT_STARTED | 0/7 | 0 |
 | Miembros de soporte | NOT_STARTED | 0/5 | 0 |
 | Reportes | NOT_STARTED | 0/1 | 0 |
-| Notificaciones y outbox | NOT_STARTED | Sin endpoint directo | 0 |
+| Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
 | Health/readiness | NOT_STARTED | 0/2 | 0 |
 | OpenAPI / Swagger UI | NOT_STARTED | 0/2 | 0 |
 | Seguridad (Helmet, CORS, rate limit, Zod, RBAC) | NOT_STARTED | Transversal | 0 |
 | Logging estructurado | NOT_STARTED | Transversal | 0 |
-| Seeds y catálogo inicial | NOT_STARTED | Sin endpoint directo | 0 |
 
-## Reutilización exacta del template
+## Reutilización y cambios del template
 
-- cli/: se conserva como CLI Vane para generar módulos, controladores, servicios, rutas, middlewares y schemas.
-- cli/templates/ y cli/utils/: se conservan como base de generación, sujetos a adaptación posterior para el contrato (por ejemplo, evitar any y mass assignment).
-- src/app.ts: se reutilizará como punto de composición de Express, pero requiere reemplazar configuración y manejo actuales.
-- src/server.ts: se reutilizará como punto de entrada del servidor, incorporando configuración y arranque compatibles con health/readiness.
-- src/routes/index.ts: se reutilizará como agregador de rutas, ajustándolo al prefijo /api/v1 y rutas fuera del prefijo.
-- src/middlewares/: se reutilizará la ubicación modular; los middlewares actuales requieren rediseño conforme al contrato.
-- src/modules/: se reutilizará la convención module.routes.ts, module.controller.ts, module.service.ts, module.schema.ts.
-- lib/prisma.ts: se reutilizará como punto único de inicialización de Prisma PostgreSQL, después de alinear el schema y el cliente generado.
-- prisma.config.ts: se reutilizará para la configuración de Prisma 7.
-- tsconfig.json, package.json, pnpm-lock.yaml: se conservarán como base; deberán actualizarse solo cuando el alcance de una etapa lo requiera.
-- Dependencias ya alineadas parcialmente con el stack: Express 5, TypeScript, Prisma 7, PostgreSQL mediante pg, Zod, pnpm, cookies y JWT.
+- Se conservan `cli/`, sus plantillas/utilidades y la configuración de TypeScript, pnpm, Express y Prisma 7.
+- Se conserva `lib/prisma.ts` como punto de inicialización con `@prisma/adapter-pg` y el cliente en `generated/prisma`.
+- Se conserva `prisma.config.ts`, ahora con el seed registrado.
+- Se creó `docker-compose.yml` con PostgreSQL 18.6, volumen persistente y healthcheck.
+- La validación real de esta etapa utilizó PostgreSQL local, no Docker Compose.
+- Se conserva la convención modular de `src/modules/` para etapas HTTP futuras.
+- Se eliminó el modelo demo `Producto` y se reemplazó el schema completo por el dominio del sistema.
+- Se retiró el código HTTP de autenticación local y CRUD de usuarios del template porque dependía de `password`, entero autoincremental y endpoints fuera del contrato. Esto no implementa OAuth ni nuevos endpoints.
+- Se retiró el middleware de autenticación demo que usaba `default_secret`; el middleware OAuth/RBAC queda pendiente.
+- Se reorganizó el historial de migraciones porque las cinco migraciones previas eran exclusivamente del template y chocaban con el nuevo `User`. La migración real es `20261003120000_init_support_system`.
 
-## Código de demostración identificado
+## Decisiones y discrepancias documentadas
 
-Debe retirarse o reemplazarse posteriormente como parte de etapas explícitas, no durante esta documentación:
+- `Category.defaultPriority` es nullable: el contrato marca varias categorías como configurables y no proporciona una prioridad. El seed conserva `NULL` en esos casos.
+- `Subcategory.priority` es nullable para permitir heredar la prioridad de la categoría.
+- `User.institutionalId` es obligatorio y único, conforme al contrato. El flujo de onboarding OAuth deberá resolver la creación/vinculación de usuarios antes de persistir un User incompleto.
+- Para un usuario nuevo, el futuro callback de Google validará la identidad y conservará un estado temporal seguro; no creará `User` hasta `complete-profile`, donde llegarán `institutionalId`, `communityType` y `phone` opcional. Los miembros SUPPORT/SUB_MANAGER pre-provisionados se vincularán por email.
+- La base local `support_system` pertenece a `samael`; la contraseña no se guarda ni se documenta.
+- Las relaciones históricas usan `Restrict`; no hay cascadas destructivas. Las bajas futuras usarán `isActive`.
+- `Ticket.number` es un entero autoincremental único y `Ticket.code` queda preparado como único; la generación de `code` pertenece al service futuro.
+- Los índices de Ticket cubren filtros individuales y combinaciones previstas para listados grandes.
+- Los índices UNIQUE nullable de PostgreSQL permiten múltiples NULL para `duplicateKey`, `dedupeKey`, `assetCode`, `serialNumber` y `googleSubject`; la lógica de uso queda para etapas posteriores.
+- No se agregaron usuarios reales ni datos personales al seed.
+- No se implementaron controladores, OAuth, servicios de tickets, bitácora, inventario, lógica HTTP, dashboard, reportes, SMTP, worker ni Swagger.
 
-- Registro/login con contraseña, bcrypt y payload de usuario en src/modules/auth/.
-- Campos password, name y entero autoincremental del modelo User.
-- Modelo Producto y migraciones/datos de ejemplo de Post, Libro, Uber y Producto.
-- Endpoints genéricos de usuarios que consultan por ID entero y exponen operaciones CRUD no contempladas por el contrato.
-- Respuestas actuales basadas en message, user y objetos directos, en lugar del sobre success/data/error/meta.
-- Cookie jwt, secreto fallback default_secret, lectura Bearer y códigos de error actuales del middleware.
-- Plantillas Vane que generan servicios/controladores con any, CRUD genérico y asignación directa de req.body.
-- La documentación de README que describe login/registro local y endpoints /api/auth/*; debe actualizarse en una etapa de documentación posterior.
+## Verificación
 
-## Verificación de esta etapa
-
-- pnpm build: OK después de generar el cliente Prisma en generated/prisma (artefacto ignorado por Git). La primera ejecución falló porque ese cliente aún no existía.
-- No se implementaron endpoints del sistema ni se alteró el schema/migraciones en esta etapa.
-- La verificación final queda completada; no se convirtió el artefacto generado en código fuente versionado.
+- No se encontraron imports ni referencias de runtime a los modelos demo eliminados.
+- `pnpm build` finaliza correctamente después de `prisma generate`.
+- `docker compose config` es válido, pero no se utilizó Docker para esta validación.
+- Se corrigió la invocación del seed a `node --import tsx prisma/seed.ts`; así se elimina la restricción IPC del binario CLI `tsx`.
+- La migración quedó aplicada y `prisma migrate status` reportó el esquema actualizado.
+- El seed produjo 10 categorías y 14 subcategorías en la primera ejecución; la segunda mantuvo exactamente esos conteos.
+- La consulta real con Prisma recuperó `PROJECTOR_FAILURE` y la subcategoría `BLURRY_IMAGE`.

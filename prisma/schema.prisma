@@ -1,32 +1,310 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-    provider = "prisma-client"
-    output   = "../generated/prisma"
+  provider = "prisma-client"
+  output   = "../generated/prisma"
 }
 
 datasource db {
-    provider = "postgresql"
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  SUPPORT
+  SUB_MANAGER
+  ADMIN
+}
+
+enum CommunityType {
+  STUDENT
+  TEACHER
+  ADMINISTRATIVE
+}
+
+enum SupportArea {
+  HARDWARE
+  SOFTWARE
+  NETWORKS
+  ADMINISTRATIVE
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum TicketStatus {
+  OPEN
+  IN_REVIEW
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InventoryType {
+  COMPUTER
+  PROJECTOR
+  CONTROL
+  ADAPTER
+}
+
+enum TicketEventType {
+  CREATED
+  ASSIGNED
+  UNASSIGNED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  CANCELLED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
 }
 
 model User {
-    id        Int      @id @default(autoincrement())
-    email     String   @unique
-    name      String?
-    password  String
-    createdAt DateTime @default(now())
-    updatedAt DateTime @updatedAt
+  id              String        @id @default(uuid()) @db.Uuid
+  googleSubject   String?       @unique
+  email           String        @unique
+  institutionalId String        @unique
+  fullName        String
+  phone           String?
+  role            Role          @default(USER)
+  communityType   CommunityType
+  supportAreas    SupportArea[] @default([])
+  skills          String[]      @default([])
+  avatarUrl       String?
+  isActive        Boolean       @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  reportedTickets      Ticket[]              @relation("TicketReporter")
+  assignedTickets      Ticket[]              @relation("TicketAssignee")
+  ticketEvents         TicketEvent[]         @relation("TicketEventActor")
+  createdActivityLogs  ActivityLog[]         @relation("ActivityLogCreator")
+  activityParticipants ActivityParticipant[]
+  activityLogRevisions ActivityLogRevision[] @relation("ActivityLogRevisionChanger")
+
+  @@index([role, isActive])
+  @@index([communityType, isActive])
 }
 
-model Producto {
-    id          Int      @id @default(autoincrement())
-    nombre      String
-    precio      Float
-    stock       Int
-    activo      Boolean  @default(true)
-    descripcion String?
-    createdAt   DateTime @default(now())
+model Category {
+  id                      String          @id @default(uuid()) @db.Uuid
+  code                    String          @unique
+  name                    String
+  supportArea             SupportArea
+  defaultPriority         TicketPriority?
+  isActive                Boolean         @default(true)
+  requiresSoftwareDetails Boolean         @default(false)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  subcategories      Subcategory[]
+  tickets            Ticket[]
+  supportSuggestions SupportSuggestion[]
+
+  @@index([supportArea, isActive])
+}
+
+model Subcategory {
+  id         String          @id @default(uuid()) @db.Uuid
+  categoryId String          @db.Uuid
+  code       String
+  name       String
+  priority   TicketPriority?
+  isActive   Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  category           Category            @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  tickets            Ticket[]
+  supportSuggestions SupportSuggestion[]
+
+  @@unique([categoryId, code])
+  @@index([categoryId, isActive])
+}
+
+model SupportSuggestion {
+  id            String   @id @default(uuid()) @db.Uuid
+  categoryId    String   @db.Uuid
+  subcategoryId String?  @db.Uuid
+  title         String
+  description   String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category    Category     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  subcategory Subcategory? @relation(fields: [subcategoryId], references: [id], onDelete: Restrict)
+
+  @@index([categoryId, subcategoryId, isActive])
+}
+
+model Ticket {
+  id                            String         @id @default(uuid()) @db.Uuid
+  number                        Int            @unique @default(autoincrement())
+  code                          String         @unique
+  title                         String
+  description                   String
+  reporterId                    String         @db.Uuid
+  reporterNameSnapshot          String
+  reporterEmailSnapshot         String
+  reporterPhoneSnapshot         String?
+  reporterCommunityTypeSnapshot CommunityType
+  categoryId                    String         @db.Uuid
+  subcategoryId                 String?        @db.Uuid
+  priority                      TicketPriority
+  status                        TicketStatus   @default(OPEN)
+  building                      String
+  room                          String?
+  inventoryItemId               String?        @db.Uuid
+  assigneeId                    String?        @db.Uuid
+  assignedAt                    DateTime?
+  softwareName                  String?
+  softwareVersion               String?
+  softwareDownloadUrl           String?
+  coordinationApprovalReference String?
+  duplicateKey                  String?        @unique
+  completedAt                   DateTime?
+  cancelledAt                   DateTime?
+  cancellationReason            String?
+  createdAt                     DateTime       @default(now())
+  updatedAt                     DateTime       @updatedAt
+
+  reporter           User                 @relation("TicketReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  category           Category             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  subcategory        Subcategory?         @relation(fields: [subcategoryId], references: [id], onDelete: Restrict)
+  inventoryItem      InventoryItem?       @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  assignee           User?                @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  events             TicketEvent[]
+  activityLogs       ActivityLog[]
+  notificationOutbox NotificationOutbox[]
+
+  @@index([reporterId])
+  @@index([assigneeId])
+  @@index([status])
+  @@index([priority])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([createdAt])
+  @@index([status, priority])
+  @@index([assigneeId, status])
+  @@index([reporterId, status])
+  @@index([categoryId, status])
+}
+
+model TicketEvent {
+  id         String          @id @default(uuid()) @db.Uuid
+  ticketId   String          @db.Uuid
+  actorId    String?         @db.Uuid
+  type       TicketEventType
+  fromStatus TicketStatus?
+  toStatus   TicketStatus?
+  metadata   Json            @default("{}")
+  createdAt  DateTime        @default(now())
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  actor  User?  @relation("TicketEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+}
+
+model ActivityLog {
+  id                    String       @id @default(uuid()) @db.Uuid
+  ticketId              String       @db.Uuid
+  activity              String
+  ticketCodeSnapshot    String
+  ticketTitleSnapshot   String
+  failureSnapshot       String
+  reporterNameSnapshot  String
+  reporterEmailSnapshot String
+  reporterPhoneSnapshot String?
+  serviceStartedAt      DateTime
+  serviceEndedAt        DateTime?
+  timeSpentMinutes      Int
+  status                TicketStatus
+  createdById           String       @db.Uuid
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  ticket       Ticket                @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  createdBy    User                  @relation("ActivityLogCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  participants ActivityParticipant[]
+  revisions    ActivityLogRevision[]
+
+  @@index([ticketId])
+  @@index([createdById])
+  @@index([status, createdAt])
+}
+
+model ActivityParticipant {
+  activityLogId String   @db.Uuid
+  userId        String   @db.Uuid
+  createdAt     DateTime @default(now())
+
+  activityLog ActivityLog @relation(fields: [activityLogId], references: [id], onDelete: Restrict)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@id([activityLogId, userId])
+  @@index([userId])
+}
+
+model ActivityLogRevision {
+  id            String   @id @default(uuid()) @db.Uuid
+  activityLogId String   @db.Uuid
+  changedById   String   @db.Uuid
+  previousData  Json
+  newData       Json
+  createdAt     DateTime @default(now())
+
+  activityLog ActivityLog @relation(fields: [activityLogId], references: [id], onDelete: Restrict)
+  changedBy   User        @relation("ActivityLogRevisionChanger", fields: [changedById], references: [id], onDelete: Restrict)
+
+  @@index([activityLogId, createdAt])
+}
+
+model InventoryItem {
+  id           String        @id @default(uuid()) @db.Uuid
+  type         InventoryType
+  model        String?
+  assetCode    String?       @unique
+  color        String?
+  size         String?
+  building     String?
+  room         String?
+  serialNumber String?       @unique
+  quantity     Int           @default(1)
+  notes        String?
+  isActive     Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  tickets Ticket[]
+
+  @@index([type, isActive])
+  @@index([building, room])
+}
+
+model NotificationOutbox {
+  id             String             @id @default(uuid()) @db.Uuid
+  type           String
+  recipientEmail String
+  ticketId       String             @db.Uuid
+  payload        Json
+  status         NotificationStatus @default(PENDING)
+  attempts       Int                @default(0)
+  availableAt    DateTime           @default(now())
+  sentAt         DateTime?
+  lastError      String?
+  dedupeKey      String?            @unique
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  ticket Ticket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+
+  @@index([status, availableAt])
+  @@index([ticketId])
 }
