@@ -862,14 +862,14 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const user = await createTestUser({ role, supportAreas: [SupportArea.HARDWARE] });
         const id = randomUUID();
         const paths = [
-            request(app).get("/api/v1/inventory"),
+            request(app).get("/api/v1/inventory").set("Cookie", cookie(user)),
             inventoryPost(user, inventoryBody("ADAPTER")),
-            request(app).get(`/api/v1/inventory/${id}`),
-            request(app).patch(`/api/v1/inventory/${id}`).send({ notes: "x" }),
-            request(app).delete(`/api/v1/inventory/${id}`),
-            request(app).get(`/api/v1/inventory/${id}/tickets`),
+            request(app).get(`/api/v1/inventory/${id}`).set("Cookie", cookie(user)),
+            request(app).patch(`/api/v1/inventory/${id}`).set("Cookie", cookie(user)).send({ notes: "x" }),
+            request(app).delete(`/api/v1/inventory/${id}`).set("Cookie", cookie(user)),
+            request(app).get(`/api/v1/inventory/${id}/tickets`).set("Cookie", cookie(user)),
         ];
-        const responses = await Promise.all(paths.map((call) => call.set("Cookie", cookie(user))));
+        const responses = await Promise.all(paths);
         expect(responses.map((response) => response.status)).toEqual([403, 403, 403, 403, 403, 403]);
     });
 
@@ -887,7 +887,7 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             const response = await inventoryPost(admin, body);
             expect(response.status).toBe(422);
             expect(response.body.error.code).toBe("VALIDATION_ERROR");
-            expect(response.body.error.fields).toHaveProperty(field);
+            expect(response.body.error.fields).toHaveProperty(field === "unknown" ? "body" : field);
         }
         const response = await inventoryPost(admin, { ...inventoryBody("COMPUTER"), model: " Dell ", notes: "  " });
         expect(response.body.data).toMatchObject({ model: "Dell", notes: null });

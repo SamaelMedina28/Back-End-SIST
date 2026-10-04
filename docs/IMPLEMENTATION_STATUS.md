@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 6: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 7: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -38,7 +38,13 @@
 | Activity Log actualización | DONE | 1/5 | PostgreSQL real: validación combinada, no-op, participantes y PATCH concurrentes |
 | Auditoría ActivityLogRevision | DONE | 1/5 | PostgreSQL real: snapshots canónicos, actor, orden y rollback; append-only por API |
 | Tests PostgreSQL de Activity Log | DONE | Incluidos en la suite Tickets Core | Creación, lectura, actualización, auditoría, concurrencia y rollback |
-| Inventario | NOT_STARTED | 0/7 | 0 |
+| Inventory list | DONE | 1/6 | PostgreSQL real: filtros, búsqueda, paginación y roles |
+| Inventory create | DONE | 1/6 | PostgreSQL real: validación por tipo, normalización y UNIQUE concurrente |
+| Inventory detail | DONE | 1/6 | PostgreSQL real: detalle inactivo, UUID inválido y 404 |
+| Inventory update | DONE | 1/6 | PostgreSQL real: validación combinada, campos strict, no-op y UNIQUE |
+| Inventory soft delete | DONE | 1/6 | PostgreSQL real: idempotencia, UNIQUE histórico y relación de tickets |
+| Inventory ticket history | DONE | 1/6 | PostgreSQL real: reporter snapshot, filtros, orden y paginación |
+| Tests PostgreSQL de inventario | DONE | Incluidos en suite Tickets Core | Guard estricto y `support_system_test` |
 | Miembros de soporte | NOT_STARTED | 0/5 | 0 |
 | Reportes | NOT_STARTED | 0/1 | 0 |
 | Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
@@ -79,6 +85,12 @@
 - `GET /api/v1/activity-log/:id`
 - `PATCH /api/v1/activity-log/:id`
 - `GET /api/v1/activity-log/:id/history`
+- `GET /api/v1/inventory`
+- `POST /api/v1/inventory`
+- `GET /api/v1/inventory/:id`
+- `PATCH /api/v1/inventory/:id`
+- `DELETE /api/v1/inventory/:id`
+- `GET /api/v1/inventory/:id/tickets`
 - `GET /api/v1/categories`
 - `POST /api/v1/categories`
 - `PATCH /api/v1/categories/:id`
@@ -123,7 +135,7 @@
 - `POST assign-self` serializa solicitudes con `SELECT ... FOR UPDATE`; asignaciones y eventos se guardan de forma atómica.
 - Los cierres COMPLETED/CANCELLED preservan el asignado, liberan `duplicateKey`, guardan timestamps y hacen terminal al ticket. La cancelación requiere nota.
 - Idempotencia persistente y multi-instancia: clave única por actor/scope/key, SHA-256 del payload y replay por 24 horas; no se agregó worker de limpieza.
-- `pnpm test` con `DATABASE_URL_TEST` configurada: 4 archivos y 138 pruebas aprobadas; 47 pruebas funcionales usaron PostgreSQL real, además de 3 guards de base.
+- `pnpm test` con `DATABASE_URL_TEST` configurada después de Etapa 7: 5 archivos y 159 pruebas aprobadas; 58 pruebas funcionales usaron PostgreSQL real, además de 3 guards de base.
 - `pnpm build`: correcto (`tsc`).
 - `pnpm exec prisma validate`: correcto.
 - OpenAPI parseado y validado mediante la suite existente.
@@ -131,6 +143,10 @@
 - Etapa 6: migración aditiva únicamente para el índice de rango/orden de bitácora. Modelos `ActivityLog`, `ActivityParticipant` y `ActivityLogRevision` ya existían; no se duplicaron.
 - ActivityLog registra snapshots desde Ticket, participantes verificados y valores de servicio en una transacción. PATCH bloquea la fila con PostgreSQL `FOR UPDATE`; revisión, sincronización de participantes y cambio quedan en la misma transacción.
 - `ActivityLogRevision` registra el estado editable completo, con IDs de participantes ordenados; los no-op no modifican `updatedAt` ni crean revisión. No existe DELETE ni mutador de revisions.
+- InventoryItem existente se reutiliza sin duplicar modelo. El tipo se valida con Zod discriminated union; `type` e `isActive` quedan excluidos de PATCH. Las restricciones UNIQUE de PostgreSQL son la barrera final para assetCode/serialNumber y sus conflictos se transforman a códigos de dominio.
+- La Etapa 7 agrega solo un índice compuesto para el historial `Ticket(inventoryItemId, createdAt DESC, id)`; el historial consulta reporterNameSnapshot sin resolver el nombre actual del User.
+- Migración `20261004212600_add_inventory_ticket_history_index` aplicada en `support_system_test` y `support_system`. En `support_system` solo se aplicó el índice aditivo; no se ejecutó reset, truncate ni limpieza de datos.
+- Prisma format/validate/generate, `tsc --noEmit`, build, test PostgreSQL real, SwaggerParser y `git diff --check` aprobaron al cierre de Etapa 7.
 - No existe login por contraseña ni campo `password` en `User`.
 - No existe secreto JWT predeterminado ni CORS con origen `*`.
 - Los tokens de Google no se persisten; el ID token se verifica y se descarta.
@@ -138,4 +154,4 @@
 
 ## Próxima etapa
 
-Inventory API continúa `NOT_STARTED` y es el siguiente módulo pendiente de implementación. Dashboard, miembros de soporte, reportes y worker de notificaciones también siguen pendientes. No se implementaron DELETE de ActivityLog, emails ni recordatorios.
+Inventory list/create/detail/update/soft delete/ticket history quedaron implementados en la Etapa 7. Dashboard, miembros de soporte, reportes y worker de notificaciones siguen pendientes. No se implementaron DELETE de ActivityLog, emails ni recordatorios.

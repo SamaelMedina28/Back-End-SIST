@@ -362,3 +362,68 @@ const history = await api(`/activity-log/${activityId}/history`);
 ```
 
 La respuesta incluye ticket, falla y datos del reportero desde snapshots históricos, participantes, fechas, minutos, estado y creador. Cada PATCH que cambia datos genera una revisión inmutable; PATCH sin cambios no genera auditoría. No sincronices snapshots si luego cambia el ticket: cada entrada conserva el contexto con el que se registró.
+
+## Inventario (D12)
+
+Las rutas de inventario requieren rol `SUB_MANAGER` o `ADMIN`. `USER` y `SUPPORT` reciben `403`. La lista es paginada y por defecto muestra solo activos; `active=false` solicita inactivos. Los tipos válidos son `COMPUTER`, `PROJECTOR`, `CONTROL` y `ADAPTER`.
+
+Campos requeridos al crear:
+
+- `COMPUTER`: `model`, `assetCode`, `color`, `size`, `building`, `serialNumber`; `room` y `notes` opcionales/null; `quantity` se omite o vale `1`.
+- `PROJECTOR`: `model`, `assetCode`, `color`, `size`; `building`, `room`, `serialNumber` y `notes` opcionales/null; `quantity` se omite o vale `1`.
+- `CONTROL` / `ADAPTER`: `model` y `quantity` (entero ≥ 1); los demás campos son opcionales/null.
+
+Los strings se recortan y los opcionales vacíos se envían/guardan como `null`. No envíes IDs, `isActive`, timestamps ni `type` en PATCH. El tipo no puede cambiarse y PATCH no reactiva. `assetCode` y `serialNumber` no se liberan al desactivar, porque permanecen únicos por historia.
+
+Listar con filtros y paginación:
+
+```ts
+const response = await fetch(
+  `${API_URL}/api/v1/inventory?page=1&pageSize=20&type=COMPUTER&search=optiplex&building=Edificio%206&active=true`,
+  { credentials: "include" },
+);
+const envelope = await response.json();
+if (!response.ok) throw new ApiError(envelope.error.code, envelope.error.message, envelope.error.fields);
+const { data, meta } = envelope;
+```
+
+Crear un equipo:
+
+```ts
+await api("/inventory", {
+  method: "POST",
+  body: JSON.stringify({
+    type: "COMPUTER",
+    model: "Dell OptiPlex 7090",
+    assetCode: "PAT-00421",
+    color: "Negro",
+    size: "SFF",
+    building: "Edificio 6",
+    room: "603",
+    serialNumber: "DX92K1",
+    quantity: 1,
+    notes: null,
+  }),
+});
+```
+
+Editar, desactivar y consultar incidencias anteriores:
+
+```ts
+await api(`/inventory/${inventoryId}`, {
+  method: "PATCH",
+  body: JSON.stringify({ room: "604", notes: "Reubicado" }),
+});
+
+await api(`/inventory/${inventoryId}`, { method: "DELETE" });
+
+const response = await fetch(
+  `${API_URL}/api/v1/inventory/${inventoryId}/tickets?page=1&pageSize=20`,
+  { credentials: "include" },
+);
+const envelope = await response.json();
+if (!response.ok) throw new ApiError(envelope.error.code, envelope.error.message, envelope.error.fields);
+const { data: tickets, meta } = envelope;
+```
+
+El historial admite `status`, `from` y `to` además de paginación. `from/to` filtran la fecha de creación del ticket. `reporter.fullName` es un snapshot del ticket y no cambia cuando se actualiza el usuario. El detalle directo y el historial siguen disponibles después de desactivar el artículo; los tickets previos conservan su relación. Un ticket nuevo que intente usar un artículo inactivo sigue recibiendo `409 INVENTORY_ITEM_INACTIVE`.

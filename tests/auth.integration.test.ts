@@ -924,6 +924,18 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.body.paths["/api/v1/activity-log/{id}"].patch).toBeDefined();
         expect(response.body.paths["/api/v1/activity-log/{id}/history"].get).toBeDefined();
         expect(response.body.paths["/api/v1/activity-log/{id}"].delete).toBeUndefined();
+        expect(response.body.paths["/api/v1/inventory"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory"].post).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory/{id}"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory/{id}"].patch).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory/{id}"].delete).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory/{id}/tickets"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/inventory/{id}"].put).toBeUndefined();
+        expect(response.body.components.schemas.CreateComputerInventoryRequest).toBeDefined();
+        expect(response.body.components.schemas.CreateProjectorInventoryRequest).toBeDefined();
+        expect(response.body.components.schemas.CreateControlInventoryRequest).toBeDefined();
+        expect(response.body.components.schemas.CreateAdapterInventoryRequest).toBeDefined();
+        expect(response.body.components.schemas.PaginatedInventoryTicketHistoryResponse).toBeDefined();
     });
 
     it("serves Swagger UI at /api/docs", async () => {

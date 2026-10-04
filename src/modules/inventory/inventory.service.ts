@@ -9,12 +9,15 @@ function fail(status: number, code: string, message: string): never {
 }
 
 function checkUniqueConflict(error: unknown): boolean {
-    if (typeof error !== "object" || error === null || !("code" in error) || error.code !== "P2002") return false;
-    const target = "meta" in error && typeof error.meta === "object" && error.meta !== null && "target" in error.meta
-        ? String(error.meta.target)
-        : "";
-    if (target.includes("assetCode")) fail(409, "INVENTORY_ASSET_CODE_ALREADY_EXISTS", "El código patrimonial ya está registrado.");
-    if (target.includes("serialNumber")) fail(409, "INVENTORY_SERIAL_NUMBER_ALREADY_EXISTS", "El número de serie ya está registrado.");
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== "P2002") return false;
+    const meta = "meta" in error && error.meta && typeof error.meta === "object"
+        ? error.meta as { target?: unknown }
+        : undefined;
+    const targetValue = meta?.target;
+    const target = Array.isArray(targetValue) ? targetValue.join(",") : String(targetValue ?? "");
+    const diagnostic = `${target} ${"message" in error ? String(error.message) : ""}`;
+    if (diagnostic.includes("assetCode")) fail(409, "INVENTORY_ASSET_CODE_ALREADY_EXISTS", "El código patrimonial ya está registrado.");
+    if (diagnostic.includes("serialNumber")) fail(409, "INVENTORY_SERIAL_NUMBER_ALREADY_EXISTS", "El número de serie ya está registrado.");
     return true;
 }
 

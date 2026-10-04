@@ -2024,6 +2024,10 @@ El contrato permite cancelación según permisos definidos por backend, pero no 
 
 El contrato define roles, filtros y campos generales de ActivityLog, pero no fija el ámbito por supportArea, el enum de estados de actividad ni el campo temporal usado por `from/to`. Para esta etapa: SUPPORT y SUB_MANAGER leen solo entradas de tickets en sus áreas; SUB_MANAGER también crea/modifica únicamente dentro de esas áreas; ADMIN opera globalmente. El historial permanece limitado a SUB_MANAGER/ADMIN, tal como indica el contrato. Los estados de actividad admitidos por la API son `IN_PROGRESS` y `COMPLETED` (sin cambiar el enum persistido existente); un ticket admite registrar trabajo cuando está `IN_PROGRESS` o `COMPLETED`. `from/to` filtran `serviceStartedAt`; una fecha simple `YYYY-MM-DD` representa el inicio UTC del día para `from` y el final UTC del día para `to`. No se exige coincidencia de área entre participante y ticket porque el contrato/prompt no la exigen. Estas aclaraciones concretan la implementación sin modificar endpoints ni campos contractuales.
 
+### Aclaración de implementación — Etapa 7 (2026-10-04)
+
+La sección 30 define filtros y permisos de inventario, pero no especifica completamente las respuestas, campos editables, orden ni semántica de fechas del historial. Para esta etapa se usa `location: { building, room }` en el listado como pide el requerimiento y un detalle explícito con los campos del modelo. El historial se pagina y ordena por `createdAt DESC, id ASC`; `from/to` filtran `Ticket.createdAt`, y `YYYY-MM-DD` representa el día UTC inclusivo. Se admite `active=true|false`; omitirlo equivale a `true`. PATCH no cambia `type`, no admite `isActive` y valida el resultado combinado bajo bloqueo de fila. `reporter.fullName` proviene de `Ticket.reporterNameSnapshot`. Estas decisiones precisan el comportamiento sin cambiar rutas ni modelos del contrato.
+
 No usar any salvo que sea absolutamente necesario.
 
 Utilizar TypeScript strict.

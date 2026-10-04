@@ -87,6 +87,8 @@ La Etapa 5 añade `20261004200132_add_ticket_status_idempotency`, una migración
 
 La Etapa 6 añade `20261004202126_add_activity_log_service_time_index`, que crea un índice compuesto descendente sobre `ActivityLog.serviceStartedAt`, `createdAt` e `id`. Da soporte al filtro/rango y al orden determinista principal del listado de bitácora. No agrega modelos, columnas ni cambios de enums. `ActivityLogRevision` no tiene mutaciones en la API; las rutas solo insertan revisiones y las leen en orden ascendente.
 
+La Etapa 7 añade `20261004212600_add_inventory_ticket_history_index`, índice compuesto sobre `Ticket.inventoryItemId`, `createdAt DESC` e `id`. Acelera el historial paginado por artículo, su orden determinista y consultas de la clave foránea; no añade tablas ni columnas ni altera tickets históricos.
+
 La validación de esta etapa utiliza el PostgreSQL local del equipo, con base `support_system` y usuario `samael`. La contraseña no se guarda en el repositorio ni en esta documentación.
 
 Para configurar la aplicación localmente:

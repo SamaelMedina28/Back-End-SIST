@@ -47,7 +47,7 @@ describe("inventory schemas", () => {
     it("valida requisitos discriminados y cantidad individual", () => {
         expect(inventoryCreateSchema.safeParse({ ...computer, serialNumber: " " }).success).toBe(false);
         expect(inventoryCreateSchema.safeParse({ ...computer, quantity: 2 }).success).toBe(false);
-        expect(inventoryCreateSchema.safeParse({ ...computer, type: "PROJECTOR", building: undefined, serialNumber: null }).success).toBe(false);
+        expect(inventoryCreateSchema.safeParse({ ...computer, type: "PROJECTOR", assetCode: undefined, serialNumber: null }).success).toBe(false);
         expect(inventoryCreateSchema.safeParse({ type: "CONTROL", model: "Control", quantity: 0 }).success).toBe(false);
         expect(inventoryCreateSchema.safeParse({ type: "ADAPTER", model: "Adaptador", quantity: -1 }).success).toBe(false);
         expect(inventoryCreateSchema.safeParse({ type: "ADAPTER", model: "Adaptador", quantity: 1, mystery: true }).success).toBe(false);

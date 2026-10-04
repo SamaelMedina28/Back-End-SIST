@@ -354,3 +354,78 @@ const history = await api(`/activity-log/${activityId}/history`);
 ```
 
 No existe `DELETE /api/v1/activity-log/:id`; las correcciones se realizan mediante PATCH y quedan auditadas.
+
+## Inventario
+
+Las seis operaciones requieren sesión y solo están disponibles para `SUB_MANAGER` y `ADMIN`. `USER` y `SUPPORT` reciben `403 FORBIDDEN`. Se serializan respuestas explícitas, sin devolver objetos Prisma ni relaciones no solicitadas.
+
+| Campo | COMPUTER | PROJECTOR | CONTROL | ADAPTER |
+|---|---|---|---|---|
+| `model` | Requerido | Requerido | Requerido | Requerido |
+| `assetCode` | Requerido | Requerido | Opcional / null | Opcional / null |
+| `color` | Requerido | Requerido | Opcional / null | Opcional / null |
+| `size` | Requerido | Requerido | Opcional / null | Opcional / null |
+| `building` | Requerido | Opcional / null | Opcional / null | Opcional / null |
+| `room` | Opcional / null | Opcional / null | Opcional / null | Opcional / null |
+| `serialNumber` | Requerido | Opcional / null | Opcional / null | Opcional / null |
+| `quantity` | 1 (opcional en request; default 1) | 1 (opcional en request; default 1) | Entero ≥ 1, requerido | Entero ≥ 1, requerido |
+| `notes` | Opcional / null | Opcional / null | Opcional / null | Opcional / null |
+
+Todos los strings se recortan; los opcionales vacíos se normalizan a `null`. Se preservan las mayúsculas/minúsculas de los identificadores visibles. El body POST es estricto: no acepta `id`, `isActive`, timestamps ni propiedades desconocidas. `type` es inmutable. PATCH admite únicamente `model`, `assetCode`, `color`, `size`, `building`, `room`, `serialNumber`, `quantity` y `notes`; valida el resultado combinado según el tipo existente. `isActive` no se puede editar mediante PATCH; para desactivar usa DELETE. Un PATCH idéntico devuelve `200` sin escritura.
+
+### `GET /api/v1/inventory`
+
+Query: `page` (1), `pageSize` (20, máximo 100), `search`, `type`, `building` y `active` (`true`/`false`). Si `active` se omite, vale `true`; para mostrar inactivos envía `active=false`. No existe filtro “todos”. `type` es uno de `COMPUTER`, `PROJECTOR`, `CONTROL`, `ADAPTER`. `building` compara sin distinguir mayúsculas; `search` busca sin distinguir mayúsculas en `model`, `assetCode`, `serialNumber`, `building` y `room`. Orden determinista: `createdAt DESC, id ASC`.
+
+Respuesta: página estándar `{ success, data, meta }`. Cada elemento expone `id`, `type`, `model`, `assetCode`, `color`, `size`, `location: { building, room }`, `serialNumber`, `quantity`, `isActive` y `updatedAt` (no expone `notes` ni relaciones). `pageSize` fuera de 1–100, filtros desconocidos o enums inválidos responden `422 VALIDATION_ERROR`.
+
+```ts
+const response = await fetch(`${API_URL}/api/v1/inventory?page=1&pageSize=20&type=COMPUTER`, {
+  credentials: "include",
+});
+const { data, meta } = await response.json();
+```
+
+### `POST /api/v1/inventory`
+
+Body discriminado y estricto conforme a la tabla. Responde `201` con el detalle completo del artículo. `assetCode` y `serialNumber` son UNIQUE incluso después de desactivar el artículo; ante colisión real o concurrente responde respectivamente `409 INVENTORY_ASSET_CODE_ALREADY_EXISTS` o `409 INVENTORY_SERIAL_NUMBER_ALREADY_EXISTS`. La base de datos es la barrera final; no se confía en prechecks.
+
+```ts
+await api("/inventory", {
+  method: "POST",
+  body: JSON.stringify({
+    type: "COMPUTER", model: "Dell OptiPlex 7090", assetCode: "PAT-00421",
+    color: "Negro", size: "SFF", building: "Edificio 6", room: "603",
+    serialNumber: "DX92K1", quantity: 1, notes: null,
+  }),
+});
+```
+
+### `GET /api/v1/inventory/:id`
+
+Devuelve el detalle aun si el artículo está inactivo: campos de inventario (`type`, texto, cantidad, `notes`, `isActive`) y `createdAt`/`updatedAt`. UUID inválido: `422 VALIDATION_ERROR`; inexistente: `404 INVENTORY_ITEM_NOT_FOUND`.
+
+### `PATCH /api/v1/inventory/:id`
+
+Body parcial de campos editables. El tipo no cambia y no existe reactivación mediante PATCH. El registro se bloquea al leer, combinar, validar sus requisitos y guardar, para no validar contra un estado obsoleto. Los errores de unicidad conservan sus códigos de dominio; UUID inválido es `422`, y artículo inexistente `404 INVENTORY_ITEM_NOT_FOUND`.
+
+```ts
+await api(`/inventory/${inventoryId}`, {
+  method: "PATCH",
+  body: JSON.stringify({ room: "604", notes: "Reubicado" }),
+});
+```
+
+### `DELETE /api/v1/inventory/:id`
+
+Soft delete idempotente: establece `isActive=false`, responde `204` incluso si ya estaba inactivo y conserva valores únicos, referencias y tickets. No hay hard delete.
+
+### `GET /api/v1/inventory/:id/tickets`
+
+Historial paginado de tickets asociados; funciona para artículos activos e inactivos. Query: `page` (1), `pageSize` (20, máximo 100), `status` (`OPEN`, `IN_REVIEW`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED`), `from` y `to`. Las fechas filtran `Ticket.createdAt`; admiten ISO DateTime con zona o fecha `YYYY-MM-DD` (UTC, inclusiva durante el día). `from > to` responde `422`. Orden: `createdAt DESC, id ASC`. El elemento expone código, título, categoría/subcategoría, prioridad, estado, `reporter: { fullName }`, `createdAt` y `completedAt`; el nombre siempre procede de `Ticket.reporterNameSnapshot`, nunca del User actual. Un artículo existente sin tickets devuelve `200` con `data: []` y `totalPages: 0`. Artículo inexistente: `404 INVENTORY_ITEM_NOT_FOUND`.
+
+```ts
+const tickets = await api(`/inventory/${inventoryId}/tickets?page=1&pageSize=20`);
+```
+
+Todas las rutas documentan `401` por sesión faltante, `403` por rol y `422 VALIDATION_ERROR` por entradas inválidas, además de los errores específicos indicados arriba.
