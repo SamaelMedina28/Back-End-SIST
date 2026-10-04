@@ -217,3 +217,75 @@ await api("/categories", {
 Los usuarios comunes solo consultan categorías y catálogo. Las solicitudes de escritura para otras cuentas responden `403 FORBIDDEN`.
 
 La documentación interactiva está disponible en `/api/docs` y el documento OpenAPI en `/api/openapi.json`.
+
+## Crear y consultar tickets
+
+El formulario debe cargar `/catalog/ticket-form` antes de mostrar categorías. Envía solo los campos aceptados; `reporterId`, `priority`, `status`, `code` y snapshots son responsabilidad del backend. La subcategoría es obligatoria si la categoría seleccionada tiene subcategorías activas. Una prioridad efectiva null impide crear el ticket hasta que ADMIN configure el catálogo.
+
+```ts
+const ticket = await api<{ id: string; code: string }>("/tickets", {
+  method: "POST",
+  body: JSON.stringify({
+    title: "Proyector sin señal",
+    categoryId,
+    subcategoryId,
+    building: "Edificio 6",
+    room: "603",
+    description: "El proyector enciende pero no muestra señal.",
+    contactPhone: null,
+    inventoryItemId: null,
+  }),
+});
+```
+
+Para una categoría con `requiresSoftwareDetails: true`, muestra los cuatro campos de software y permite enviar el formulario solo a cuentas `communityType: "TEACHER"`:
+
+```ts
+const software = {
+  name: "AutoCAD",
+  version: "2027",
+  downloadUrl: "https://example.com/autocad",
+  coordinationApprovalReference: "OFICIO-FCQI-2026-184",
+};
+```
+
+Para listar, el helper `api` anterior devuelve solo `data`. Si necesitas paginación, conserva también `meta` leyendo el envelope:
+
+```ts
+const response = await fetch(`${API_URL}/api/v1/tickets?page=1&pageSize=20&status=OPEN`, {
+  credentials: "include",
+});
+const envelope = await response.json();
+if (!response.ok) throw new Error(envelope.error?.message ?? "No fue posible listar tickets.");
+const tickets = envelope.data;
+const { page, pageSize, total, totalPages } = envelope.meta;
+```
+
+`USER` ve solo sus tickets. `SUPPORT` y `SUB_MANAGER` ven los tickets de sus áreas, incluso si otro usuario los reportó. `ADMIN` ve todos. Los filtros `assignment` (`mine`, `unassigned`, `assigned`), `assignedTo` y `supportArea` no están disponibles para `USER`. El filtro de área de un miembro de soporte debe ser una de sus áreas. Las fechas `createdFrom` y `createdTo` son instantes ISO inclusivos; `pageSize` no debe superar 100.
+
+```ts
+const detail = await api(`/tickets/${ticketId}`);
+const events = await api(`/tickets/${ticketId}/events`);
+```
+
+En el detalle, el nombre, correo y teléfono del reportero son snapshots del momento en que creó el ticket. El timeline empieza con un evento `CREATED` y llega ordenado de antiguo a nuevo.
+
+Para mostrar acciones útiles según el código de error, adapta el helper a conservar `error.code` además de `message`:
+
+```ts
+class ApiError extends Error {
+  constructor(public code: string, message: string, public fields?: Record<string, string[]>) {
+    super(message);
+  }
+}
+
+// Dentro del helper, después de await response.json():
+if (!response.ok) {
+  throw new ApiError(json.error?.code ?? "UNKNOWN_ERROR", json.error?.message ?? "Error desconocido", json.error?.fields);
+}
+```
+
+- `409 DUPLICATE_TICKET`: muestra que ya existe una incidencia activa para la misma categoría y ubicación.
+- `409 ACTIVE_TICKET_LIMIT_REACHED`: indica que el usuario alcanzó diez tickets activos.
+- `409 TICKET_PRIORITY_NOT_CONFIGURED`: pide elegir otra categoría o avisar a ADMIN para configurarla.
+- `422 VALIDATION_ERROR`: presenta `error.fields` junto a los campos del formulario; la descripción admite máximo 50 palabras.

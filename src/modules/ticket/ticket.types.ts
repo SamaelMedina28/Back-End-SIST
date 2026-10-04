@@ -36,9 +36,8 @@ export interface TicketRecord {
     assigneeId: string | null; assignedAt: Date | null; softwareName: string | null; softwareVersion: string | null;
     softwareDownloadUrl: string | null; coordinationApprovalReference: string | null; duplicateKey: string | null;
     completedAt: Date | null; cancelledAt: Date | null; createdAt: Date; updatedAt: Date;
-    category: { id: string; code: string; name: string; supportArea?: string };
+    category: { id: string; code: string; name: string; supportArea: string };
     subcategory: { id: string; code: string; name: string } | null;
-    reporter: { id: string; fullName: string; email: string; phone: string | null; communityType: string };
     assignee: { id: string; fullName: string } | null;
     inventoryItem: { id: string; type: string; model: string | null; assetCode: string | null } | null;
 }

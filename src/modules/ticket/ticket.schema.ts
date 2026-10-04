@@ -13,7 +13,7 @@ const softwareSchema = z.object({
 
 export const createTicketSchema = z.object({
         title: trimmed(150), categoryId: uuid, subcategoryId: uuid.nullable().optional(), building: trimmed(120),
-        room: nullableTrimmed(80), description: z.string().trim().min(1).max(5000)
+        room: nullableTrimmed(80), description: z.string().trim().min(1)
             .refine((value) => countWords(value) <= 50, "La descripción no puede exceder 50 palabras."),
         contactPhone: phone, inventoryItemId: uuid.nullable().optional(), software: softwareSchema.optional(),
 }).strict();

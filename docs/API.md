@@ -148,7 +148,7 @@ Los códigos se validan como `UPPER_SNAKE_CASE` y quedan estables. Los listados 
 }
 ```
 
-El contenido procede de PostgreSQL; las prioridades nulas se conservan. La API aún no crea tickets ni aplica el límite.
+El contenido procede de PostgreSQL; las prioridades nulas se conservan. La creación de tickets aplica el límite de 10 activos para `USER`.
 
 ### `GET /api/v1/catalog/support-suggestions`
 
@@ -159,12 +159,93 @@ El contenido procede de PostgreSQL; las prioridades nulas se conservan. La API a
 
 No se sembraron sugerencias ficticias. El endpoint devuelve `[]` hasta que existan filas activas cargadas en la tabla.
 
+## Tickets Core
+
+Las cuatro rutas requieren la cookie de sesión HTTP-only. `USER` ve sus reportes; `SUPPORT` y `SUB_MANAGER` ven tickets de sus `supportAreas`; `ADMIN` ve todos. Crear un ticket utiliza siempre al usuario de la sesión como reportero. `SUPPORT`, `SUB_MANAGER` y `ADMIN` también pueden crear tickets propios; el límite de diez activos corresponde al rol `USER`.
+
+### `POST /api/v1/tickets`
+
+Crea un ticket y su evento inicial. Body JSON estricto:
+
+```json
+{
+  "title": "Proyector sin señal",
+  "categoryId": "UUID",
+  "subcategoryId": "UUID",
+  "building": "Edificio 6",
+  "room": "603",
+  "description": "El proyector enciende pero no muestra señal.",
+  "contactPhone": null,
+  "inventoryItemId": null
+}
+```
+
+`title` tiene máximo 150 caracteres tras `trim`; `description`, máximo 50 palabras separadas por espacios Unicode. `room`, `contactPhone` e `inventoryItemId` son opcionales o null; `subcategoryId` también acepta null, pero es obligatoria cuando la categoría tiene subcategorías activas. El teléfono acepta formatos habituales con al menos siete dígitos. Si `category.requiresSoftwareDetails` es true, solo `TEACHER` puede crear la solicitud y debe añadir `software` completo: `name`, `version`, `downloadUrl` (URL válida) y `coordinationApprovalReference`. En otras categorías, `software` se rechaza. Se valida que el inventario exista y esté activo cuando se indica un artículo.
+
+El backend calcula `priority = subcategory.priority ?? category.defaultPriority`; si ambas son null responde `409 TICKET_PRIORITY_NOT_CONFIGURED`. Guarda `status=OPEN`, snapshots del reportero y teléfono `contactPhone ?? user.phone ?? null`. Genera `number` desde la secuencia PostgreSQL y `code` como `TK-` más el número con al menos seis dígitos. La ubicación visible conserva sus valores recortados; `duplicateKey` usa SHA-256 de categoría, subcategoría y ubicación normalizada NFKC/minúsculas/espacios colapsados. El índice único impide duplicados activos incluso entre reporteros. `Ticket` y `TicketEvent CREATED` se guardan en la misma transacción.
+
+Respuesta `201`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "UUID", "code": "TK-001045", "title": "Proyector sin señal",
+    "description": "El proyector enciende pero no muestra señal.",
+    "category": { "id": "UUID", "code": "PROJECTOR_FAILURE", "name": "Falla de proyector" },
+    "subcategory": { "id": "UUID", "code": "CONNECTION_FAILURE", "name": "Falla de conexión" },
+    "location": { "building": "Edificio 6", "room": "603" },
+    "priority": "HIGH", "status": "OPEN", "assignee": null,
+    "createdAt": "2026-10-03T12:00:00.000Z"
+  }
+}
+```
+
+Errores: `401 AUTHENTICATION_REQUIRED`; `403 SOFTWARE_REQUEST_REQUIRES_TEACHER`; `404 CATEGORY_NOT_FOUND`, `SUBCATEGORY_NOT_FOUND`, `INVENTORY_ITEM_NOT_FOUND`; `409 CATEGORY_INACTIVE`, `SUBCATEGORY_INACTIVE`, `INVENTORY_ITEM_INACTIVE`, `TICKET_PRIORITY_NOT_CONFIGURED`, `DUPLICATE_TICKET`, `ACTIVE_TICKET_LIMIT_REACHED`; `422 VALIDATION_ERROR` o `SUBCATEGORY_CATEGORY_MISMATCH`. Los errores conservan `{ success: false, error: { code, message, fields? }, requestId }`.
+
+```ts
+const ticket = await api("/tickets", { method: "POST", body: JSON.stringify({
+  title: "Proyector sin señal", categoryId, subcategoryId, building: "Edificio 6",
+  room: "603", description: "El proyector enciende pero no muestra señal.",
+  contactPhone: null, inventoryItemId: null,
+}) });
+```
+
+### `GET /api/v1/tickets`
+
+Lista solo tickets visibles para el rol. Query opcional: `page` (default 1), `pageSize` (default 20, máximo 100), `search` (código o título sin distinguir mayúsculas), `status`, `priority`, `categoryId`, `subcategoryId`, `assignment`, `assignedTo`, `supportArea`, `createdFrom`, `createdTo`, `sort` y `order`. `status` acepta un único estado. `assignment` acepta `mine`, `unassigned` o `assigned`; `USER` no puede enviar `assignment`, `assignedTo` ni `supportArea` (403). Para `SUPPORT`/`SUB_MANAGER`, `supportArea` debe ser propia o responde `403 SUPPORT_AREA_FORBIDDEN`. Los filtros solo reducen el conjunto autorizado.
+
+`createdFrom` y `createdTo` son instantes ISO con zona horaria; ambos límites son inclusivos y `createdFrom <= createdTo`. `sort` permite `createdAt`, `updatedAt`, `priority`, `status`, `code`; `order` permite `asc`/`desc`. Default: `createdAt desc`; un empate se resuelve por UUID ascendente. UUID, fechas, enum, sort o pageSize inválidos responden `422 VALIDATION_ERROR`. Una UUID inexistente como filtro devuelve lista vacía.
+
+Respuesta `200`: `{ "success": true, "data": [{ "id": "UUID", "code": "TK-000001", "title": "...", "category": { "id": "UUID", "name": "..." }, "subcategory": null, "location": { "building": "...", "room": null }, "priority": "HIGH", "status": "OPEN", "assignee": null, "createdAt": "ISO_DATE" }], "meta": { "page": 1, "pageSize": 20, "total": 1, "totalPages": 1 } }`. El listado omite snapshots y `duplicateKey`.
+
+```ts
+const response = await fetch(`${API_URL}/api/v1/tickets?page=1&pageSize=20&status=OPEN`, { credentials: "include" });
+const { data, meta } = await response.json();
+```
+
+### `GET /api/v1/tickets/:id`
+
+`id` debe ser UUID. Responde `200` con detalle, incluyendo descripción, reportero desde snapshots históricos (`id`, `fullName`, `email`, `phone`, `communityType`), categoría y subcategoría, ubicación, prioridad, estado, asignado, resumen de inventario, `software` o null y fechas `createdAt`, `updatedAt`, `assignedAt`, `completedAt`, `cancelledAt`. Si el ticket no existe: `404 TICKET_NOT_FOUND`; si existe pero está fuera del alcance: `403 FORBIDDEN_TICKET`; UUID inválido: `422 VALIDATION_ERROR`.
+
+```ts
+const ticket = await api(`/tickets/${ticketId}`);
+```
+
+### `GET /api/v1/tickets/:id/events`
+
+Misma visibilidad que el detalle y los mismos errores `403`/`404`/`422`. Responde `200` con `{ success: true, data: [{ id, type, actor: { id, fullName } | null, fromStatus, toStatus, metadata, createdAt }] }`. El timeline se ordena por `createdAt ASC, id ASC`; el evento inicial es `CREATED`, `fromStatus=null`, `toStatus=OPEN` y actor igual al reportero.
+
+```ts
+const events = await api(`/tickets/${ticketId}/events`);
+```
+
 ## Documentación interactiva
 
 - Swagger UI: `GET /api/docs`
 - OpenAPI JSON: `GET /api/openapi.json`
 
-El documento describe las rutas implementadas de auth, perfil, catálogo, categorías, subcategorías y health/readiness. No publica rutas de tickets ni de módulos futuros.
+El documento describe las rutas implementadas de auth, perfil, catálogo, categorías, subcategorías, Tickets Core y health/readiness. No publica asignaciones ni mutaciones de estado todavía.
 
 ## Ejemplo del helper frontend
 

@@ -1,4 +1,4 @@
-import { Prisma, TicketStatus, type PrismaClient, type TicketPriority } from "../../../generated/prisma/client.js";
+import { Prisma, Role, TicketStatus, type PrismaClient, type TicketPriority } from "../../../generated/prisma/client.js";
 import { AppError } from "../../common/errors/app-error.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import { MAX_ACTIVE_TICKETS } from "../category/category.service.js";
@@ -7,7 +7,6 @@ import type { TicketCreateInput, TicketQuery, TicketRecord, TicketRepository } f
 const include = {
     category: { select: { id: true, code: true, name: true, supportArea: true } },
     subcategory: { select: { id: true, code: true, name: true } },
-    reporter: { select: { id: true, fullName: true, email: true, phone: true, communityType: true } },
     assignee: { select: { id: true, fullName: true } },
     inventoryItem: { select: { id: true, type: true, model: true, assetCode: true } },
 } as const;
@@ -15,7 +14,8 @@ const include = {
 function uniqueTarget(error: unknown): string {
     if (!error || typeof error !== "object" || !("code" in error) || error.code !== "P2002") return "";
     const meta = "meta" in error && error.meta && typeof error.meta === "object" ? error.meta as { target?: unknown } : undefined;
-    return Array.isArray(meta?.target) ? meta.target.join(",") : String(meta?.target ?? "");
+    const target = Array.isArray(meta?.target) ? meta.target.join(",") : String(meta?.target ?? "");
+    return target || ("message" in error ? String(error.message) : "");
 }
 
 export class PrismaTicketRepository implements TicketRepository {
@@ -36,7 +36,7 @@ export class PrismaTicketRepository implements TicketRepository {
                 const active = await tx.ticket.count({
                     where: { reporterId: user.id, status: { in: [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS] } },
                 });
-                if (active >= MAX_ACTIVE_TICKETS) {
+                if (user.role === Role.USER && active >= MAX_ACTIVE_TICKETS) {
                     throw new AppError(409, "ACTIVE_TICKET_LIMIT_REACHED", "Ya tienes 10 tickets activos.");
                 }
 

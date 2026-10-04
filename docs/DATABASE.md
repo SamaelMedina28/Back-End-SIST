@@ -158,6 +158,17 @@ Prisma Studio sirve para inspección y desarrollo. Las modificaciones de esquema
 
 ## Base de datos de pruebas
 
-La suite HTTP usa un repositorio en memoria para usuarios y catálogo, junto con Supertest. No conecta a `support_system`, no aplica migraciones y no borra datos manuales. Esto permite probar middleware, reglas de catálogo, roles, respuestas y OpenAPI de forma aislada.
+La etapa Tickets Core usa PostgreSQL real en `support_system_test`. Los tests previos de auth y catálogo siguen usando repositorios en memoria. La variable `DATABASE_URL_TEST` es independiente de `DATABASE_URL`; nunca uses el valor de desarrollo para esta suite.
 
-La suite no sustituye una futura prueba de integración de `PrismaCatalogRepository` contra PostgreSQL. Cuando se agregue, deberá usar una base exclusiva de tests y nunca apuntar a `support_system`.
+Preparación inicial, con un usuario PostgreSQL que pueda crear bases:
+
+```bash
+createdb -h localhost support_system_test
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/support_system_test" pnpm exec prisma migrate deploy
+DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/support_system_test" pnpm exec prisma db seed
+DATABASE_URL_TEST="postgresql://USER:PASSWORD@localhost:5432/support_system_test" pnpm test
+```
+
+Si la base ya existe, omite `createdb`. En un equipo con autenticación local por socket, ajusta la URL de conexión sin guardar credenciales en Git. La suite verifica antes de conectarse que el nombre configurado termina en `_test`, consulta `current_database()` y exige exactamente `support_system_test` antes de truncar fixtures. Limpia solo tablas de la base de pruebas, conserva el seed de categorías y elimina al terminar las categorías temporales `TEST_CORE_*`. Si `DATABASE_URL_TEST` no está definida, los tests PostgreSQL se omiten; para verificar esta etapa hay que ejecutarlos con la variable configurada. No se resetea ni limpia `support_system`.
+
+La migración inicial ya define `Ticket.number` como `SERIAL` y un índice `UNIQUE` nullable sobre `duplicateKey`; no fue necesario crear una migración nueva. Al crear tickets, la transacción bloquea la fila `User` del reportero con `FOR UPDATE`, cuenta los estados activos, consume `nextval` de la secuencia real, inserta Ticket y después TicketEvent CREATED. La secuencia puede dejar huecos si la transacción revierte; número y código siguen siendo únicos y coherentes. Al completar o cancelar tickets en la etapa futura, esa mutación deberá poner `duplicateKey = null` para liberar la ubicación.

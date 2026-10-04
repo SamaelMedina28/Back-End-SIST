@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 3: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 4: 2026-10-03. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -25,8 +25,11 @@
 | Support suggestions read API | DONE | 1/1 | 4 casos; sin seed ficticio |
 | Resolución de prioridad efectiva | DONE | Utilidad compartida | 3 casos; herencia y null |
 | OpenAPI / Swagger UI | DONE | 2/2 | 5 casos; schema validado y UI servida |
-| Tickets y creación | NOT_STARTED | 0/13 | 0 |
-| Timeline / eventos de ticket | NOT_STARTED | Incluido en tickets | 0 |
+| Tickets Core: POST, listado, detalle y eventos | DONE | 4/13 | 27 tests PostgreSQL reales + 4 unitarios |
+| Prevención de duplicados | DONE | Incluido en POST | UNIQUE PostgreSQL, normalización y concurrencia |
+| Límite de 10 tickets activos | DONE | Incluido en POST | Lock del reportero, conteo y concurrencia PostgreSQL |
+| Base PostgreSQL `support_system_test` | DONE | 0 | Migración y seed reales; guard de base de pruebas |
+| Timeline / eventos de ticket | DONE | 1/1 de esta etapa | CREATED, orden, actor y RBAC |
 | Autoasignación y asignación administrativa | NOT_STARTED | Incluido en tickets | 0 |
 | Estados, prioridad e idempotencia | NOT_STARTED | Incluido en tickets | 0 |
 | Dashboard | NOT_STARTED | 0/1 | 0 |
@@ -59,6 +62,10 @@
 - `PATCH /api/v1/users/me`
 - `GET /api/v1/catalog/ticket-form`
 - `GET /api/v1/catalog/support-suggestions`
+- `POST /api/v1/tickets`
+- `GET /api/v1/tickets`
+- `GET /api/v1/tickets/:id`
+- `GET /api/v1/tickets/:id/events`
 - `GET /api/v1/categories`
 - `POST /api/v1/categories`
 - `PATCH /api/v1/categories/:id`
@@ -86,11 +93,20 @@
 - Los tests de etapa 3 usan repositorios en memoria y Supertest; no conectan ni realizan operaciones destructivas en `support_system`. La implementación Prisma aún no tiene una prueba de integración con una base PostgreSQL exclusiva para tests.
 - Swagger UI se sirve desde la dependencia local en `/api/docs`; la relajación de CSP requerida por sus assets se limita a esa ruta.
 
+## Etapa 4 implementada
+
+- `POST /tickets` valida body estricto, categoría/subcategoría/inventario activo, rol docente para solicitudes de software, prioridad heredada y snapshots del reportero. Crea `OPEN` y `TicketEvent CREATED` en una transacción.
+- `duplicateKey` es SHA-256 de categoría, subcategoría y ubicación normalizada. El índice UNIQUE existente resuelve duplicados paralelos. El error Prisma se traduce a `409 DUPLICATE_TICKET` sin exponer detalles técnicos.
+- Para `USER`, la transacción bloquea la fila del reportero mediante `SELECT ... FOR UPDATE`, cuenta tickets `OPEN`/`IN_REVIEW`/`IN_PROGRESS` y rechaza el undécimo. `number` proviene de `nextval` de la secuencia `SERIAL` existente; `code` usa `TK-` y al menos seis dígitos. No se necesitó migración nueva. Una secuencia puede tener huecos tras rollback.
+- El listado aplica primero alcance por rol y luego filtros, paginación y orden allowlist; el detalle y eventos devuelven 403 cuando un ticket existe pero no es visible. Mappers explícitos evitan exponer `duplicateKey` y datos internos; el detalle conserva snapshots históricos.
+- `assignment` acepta `mine`, `unassigned` y `assigned`. `USER` recibe 403 al usar `assignment`, `assignedTo` o `supportArea`; un miembro de soporte recibe `SUPPORT_AREA_FORBIDDEN` al pedir un área no asignada. Fechas ISO con zona horaria se interpretan como instantes inclusivos.
+- La suite PostgreSQL usa `DATABASE_URL_TEST` y exige `support_system_test` antes de limpiar fixtures. La migración inicial y seed se aplicaron allí. `support_system` no fue reseteada ni limpiada.
+
 ## Verificación
 
 - `prisma validate`: correcto.
 - `prisma generate`: correcto; Prisma Client 7.9.1 generado.
-- `pnpm test`: 1 archivo y 75 pruebas aprobadas.
+- `pnpm test` con `DATABASE_URL_TEST` configurada: 3 archivos y 106 pruebas aprobadas, de las cuales 27 usaron PostgreSQL real.
 - `pnpm build`: correcto.
 - `tsc --noEmit`: correcto.
 - No existe login por contraseña ni campo `password` en `User`.
@@ -100,4 +116,4 @@
 
 ## Próxima etapa
 
-Tickets Core continúa en `NOT_STARTED`. No se avanzó a esa etapa.
+Assignment + Status Mutations continúa en `NOT_STARTED`. No se avanzó a esa etapa.

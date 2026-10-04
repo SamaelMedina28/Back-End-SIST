@@ -62,7 +62,7 @@ export const openApiDocument = {
     info: {
         title: "Sistema Integral de Soporte Técnico FCQI-UABC API",
         version: "1.0.0",
-        description: "API REST de autenticación, perfil y catálogo de soporte técnico.",
+        description: "API REST de autenticación, catálogo y tickets de soporte técnico.",
     },
     servers: [{ url: "/" }],
     tags: [
@@ -71,6 +71,7 @@ export const openApiDocument = {
         { name: "Catalog" },
         { name: "Categories" },
         { name: "Subcategories" },
+        { name: "Tickets" },
         { name: "System" },
     ],
     paths: {
@@ -298,6 +299,70 @@ export const openApiDocument = {
                 responses: { 204: { description: "Subcategoría desactivada." }, ...errorResponses([401, 403, 404, 422]) },
             }),
         },
+        "/api/v1/tickets": {
+            post: operation({
+                summary: "Crear ticket",
+                description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados con UNIQUE. Las solicitudes de software requieren TEACHER.",
+                tags: ["Tickets"], security: cookieSecurity,
+                roles: ["USER", "SUPPORT", "SUB_MANAGER", "ADMIN"],
+                requestBody: { required: true, content: json({ $ref: "#/components/schemas/CreateTicketRequest" }, {
+                    title: "Proyector sin señal", categoryId: "00000000-0000-4000-8000-000000000001",
+                    subcategoryId: "00000000-0000-4000-8000-000000000002", building: "Edificio 6", room: "603",
+                    description: "El proyector enciende pero no muestra señal.", contactPhone: null, inventoryItemId: null,
+                }) },
+                responses: {
+                    201: successResponse("Ticket creado.", { $ref: "#/components/schemas/CreatedTicket" }),
+                    ...errorResponses([401, 403, 404, 409, 422, 500]),
+                },
+            }),
+            get: operation({
+                summary: "Listar tickets visibles",
+                description: "USER ve sus reportes; SUPPORT y SUB_MANAGER ven tickets de sus áreas; ADMIN ve todos. Los filtros reducen ese conjunto. assignment acepta mine, unassigned o assigned; USER no usa assignment, assignedTo ni supportArea. createdFrom y createdTo son instantes ISO inclusivos.",
+                tags: ["Tickets"], security: cookieSecurity,
+                parameters: [
+                    { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+                    { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+                    { name: "search", in: "query", schema: { type: "string", maxLength: 100 }, description: "Código o título, sin distinguir mayúsculas." },
+                    { name: "status", in: "query", schema: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] } },
+                    { name: "priority", in: "query", schema: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] } },
+                    { name: "categoryId", in: "query", schema: { type: "string", format: "uuid" } },
+                    { name: "subcategoryId", in: "query", schema: { type: "string", format: "uuid" } },
+                    { name: "assignment", in: "query", schema: { type: "string", enum: ["mine", "unassigned", "assigned"] } },
+                    { name: "assignedTo", in: "query", schema: { type: "string", format: "uuid" } },
+                    { name: "supportArea", in: "query", schema: { type: "string", enum: ["HARDWARE", "SOFTWARE", "NETWORKS", "ADMINISTRATIVE"] } },
+                    { name: "createdFrom", in: "query", schema: { type: "string", format: "date-time" } },
+                    { name: "createdTo", in: "query", schema: { type: "string", format: "date-time" } },
+                    { name: "sort", in: "query", schema: { type: "string", enum: ["createdAt", "updatedAt", "priority", "status", "code"], default: "createdAt" } },
+                    { name: "order", in: "query", schema: { type: "string", enum: ["asc", "desc"], default: "desc" } },
+                ],
+                responses: {
+                    200: { description: "Página de tickets visibles.", content: json({ $ref: "#/components/schemas/PaginatedTicketsResponse" }) },
+                    ...errorResponses([401, 403, 422]),
+                },
+            }),
+        },
+        "/api/v1/tickets/{id}": {
+            get: operation({
+                summary: "Consultar detalle de ticket",
+                description: "Devuelve el detalle visible para el actor; el reportero se representa mediante snapshots históricos.",
+                tags: ["Tickets"], security: cookieSecurity, parameters: [idParameter],
+                responses: {
+                    200: successResponse("Detalle del ticket.", { $ref: "#/components/schemas/TicketDetail" }),
+                    ...errorResponses([401, 403, 404, 422]),
+                },
+            }),
+        },
+        "/api/v1/tickets/{id}/events": {
+            get: operation({
+                summary: "Consultar eventos de ticket",
+                description: "Aplica la misma autorización del detalle. Ordena por createdAt ASC y por id ASC en caso de empate.",
+                tags: ["Tickets"], security: cookieSecurity, parameters: [idParameter],
+                responses: {
+                    200: successResponse("Timeline del ticket.", { type: "array", items: { $ref: "#/components/schemas/TicketEvent" } }),
+                    ...errorResponses([401, 403, 404, 422]),
+                },
+            }),
+        },
         "/health": {
             get: operation({
                 summary: "Estado del proceso",
@@ -413,6 +478,78 @@ export const openApiDocument = {
                     priority: { type: ["string", "null"], enum: ["LOW", "MEDIUM", "HIGH", null] },
                 },
             },
+            CreateTicketRequest: {
+                type: "object", additionalProperties: false,
+                required: ["title", "categoryId", "building", "description"],
+                properties: {
+                    title: { type: "string", minLength: 1, maxLength: 150 },
+                    categoryId: { type: "string", format: "uuid" },
+                    subcategoryId: { type: ["string", "null"], format: "uuid", description: "Obligatoria si la categoría tiene subcategorías activas." },
+                    building: { type: "string", minLength: 1, maxLength: 120 },
+                    room: { type: ["string", "null"], maxLength: 80 },
+                    description: { type: "string", minLength: 1, description: "Máximo 50 palabras." },
+                    contactPhone: { type: ["string", "null"], maxLength: 40 },
+                    inventoryItemId: { type: ["string", "null"], format: "uuid" },
+                    software: { type: "object", additionalProperties: false,
+                        required: ["name", "version", "downloadUrl", "coordinationApprovalReference"],
+                        properties: {
+                            name: { type: "string" }, version: { type: "string" },
+                            downloadUrl: { type: "string", format: "uri" },
+                            coordinationApprovalReference: { type: "string" },
+                        },
+                    },
+                },
+            },
+            TicketCategorySummary: { type: "object", required: ["id", "code", "name"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, name: { type: "string" },
+            } },
+            TicketSubcategorySummary: { type: "object", required: ["id", "code", "name"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, name: { type: "string" },
+            } },
+            CreatedTicket: { type: "object", required: ["id", "code", "title", "description", "category", "subcategory", "location", "priority", "status", "assignee", "createdAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string", pattern: "^TK-[0-9]{6,}$" },
+                title: { type: "string" }, description: { type: "string" },
+                category: { $ref: "#/components/schemas/TicketCategorySummary" },
+                subcategory: { anyOf: [{ $ref: "#/components/schemas/TicketSubcategorySummary" }, { type: "null" }] },
+                location: { type: "object", required: ["building", "room"], properties: { building: { type: "string" }, room: { type: ["string", "null"] } } },
+                priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] }, status: { const: "OPEN" },
+                assignee: { type: "null" }, createdAt: { type: "string", format: "date-time" },
+            } },
+            TicketListItem: { type: "object", required: ["id", "code", "title", "category", "subcategory", "location", "priority", "status", "assignee", "createdAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" },
+                category: { type: "object", properties: { id: { type: "string", format: "uuid" }, name: { type: "string" } } },
+                subcategory: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, name: { type: "string" } } }, { type: "null" }] },
+                location: { type: "object", properties: { building: { type: "string" }, room: { type: ["string", "null"] } } },
+                priority: { type: "string", enum: ["LOW", "MEDIUM", "HIGH"] },
+                status: { type: "string", enum: ["OPEN", "IN_REVIEW", "IN_PROGRESS", "COMPLETED", "CANCELLED"] },
+                assignee: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } }, { type: "null" }] },
+                createdAt: { type: "string", format: "date-time" },
+            } },
+            TicketDetail: { type: "object", required: ["id", "code", "title", "description", "reporter", "category", "subcategory", "location", "priority", "status", "assignee", "inventoryItem", "software", "createdAt", "updatedAt", "assignedAt", "completedAt", "cancelledAt"], properties: {
+                id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" }, description: { type: "string" },
+                reporter: { type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" }, email: { type: "string", format: "email" }, phone: { type: ["string", "null"] }, communityType: { type: "string" } } },
+                category: { type: "object", properties: { id: { type: "string", format: "uuid" }, code: { type: "string" }, name: { type: "string" }, supportArea: { type: "string" } } },
+                subcategory: { anyOf: [{ $ref: "#/components/schemas/TicketSubcategorySummary" }, { type: "null" }] },
+                location: { type: "object", properties: { building: { type: "string" }, room: { type: ["string", "null"] } } },
+                priority: { type: "string" }, status: { type: "string" },
+                assignee: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } }, { type: "null" }] },
+                inventoryItem: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, type: { type: "string" }, model: { type: ["string", "null"] }, assetCode: { type: ["string", "null"] } } }, { type: "null" }] },
+                software: { anyOf: [{ type: "object", properties: { name: { type: "string" }, version: { type: "string" }, downloadUrl: { type: "string", format: "uri" }, coordinationApprovalReference: { type: "string" } } }, { type: "null" }] },
+                createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" },
+                assignedAt: { type: ["string", "null"], format: "date-time" }, completedAt: { type: ["string", "null"], format: "date-time" }, cancelledAt: { type: ["string", "null"], format: "date-time" },
+            } },
+            TicketEvent: { type: "object", required: ["id", "type", "actor", "fromStatus", "toStatus", "metadata", "createdAt"], properties: {
+                id: { type: "string", format: "uuid" }, type: { type: "string", enum: ["CREATED", "ASSIGNED", "UNASSIGNED", "STATUS_CHANGED", "PRIORITY_CHANGED", "CANCELLED"] },
+                actor: { anyOf: [{ type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } }, { type: "null" }] },
+                fromStatus: { type: ["string", "null"] }, toStatus: { type: ["string", "null"] },
+                metadata: { type: "object" }, createdAt: { type: "string", format: "date-time" },
+            } },
+            PaginatedTicketsResponse: { type: "object", required: ["success", "data", "meta"], properties: {
+                success: { const: true }, data: { type: "array", items: { $ref: "#/components/schemas/TicketListItem" } },
+                meta: { type: "object", required: ["page", "pageSize", "total", "totalPages"], properties: {
+                    page: { type: "integer" }, pageSize: { type: "integer" }, total: { type: "integer" }, totalPages: { type: "integer" },
+                } },
+            } },
             CompleteProfileInput: {
                 type: "object", required: ["institutionalId", "communityType"], additionalProperties: false,
                 properties: {

@@ -85,6 +85,8 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         assertTestDatabaseName(databaseUrl as string, name);
         if (configuredName !== "support_system_test") throw new Error("Esta suite exige support_system_test.");
         safe = true;
+        await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_event ON "TicketEvent"`);
+        await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_event()`);
         await cleanTicketsAndUsers();
         await prisma.subcategory.deleteMany({ where: { category: { code: { startsWith: "TEST_CORE_" } } } });
         await prisma.category.deleteMany({ where: { code: { startsWith: "TEST_CORE_" } } });
@@ -145,6 +147,8 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const response = await post(user, { ...baseBody(hardwareId, hardwareSubId), contactPhone: "6647654321" });
         expect(response.status).toBe(201);
         expect(response.body.data).toMatchObject({ priority: "HIGH", status: "OPEN", assignee: null });
+        expect(response.body.data.duplicateKey).toBeUndefined();
+        expect(response.body.data.reporterNameSnapshot).toBeUndefined();
         const ticket = await prisma.ticket.findUniqueOrThrow({ where: { id: response.body.data.id }, include: { events: true } });
         expect(ticket.code).toBe(`TK-${String(ticket.number).padStart(6, "0")}`);
         expect(ticket.reporterNameSnapshot).toBe("Nombre Histórico");
@@ -234,6 +238,15 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(await prisma.ticket.count({ where: { status: TicketStatus.OPEN } })).toBe(1);
     });
 
+    it("UNIQUE también impide el mismo reporte enviado por otro usuario", async () => {
+        const first = await createTestUser();
+        const second = await createTestUser();
+        expect((await post(first, baseBody(hardwareId, hardwareSubId))).status).toBe(201);
+        const response = await post(second, baseBody(hardwareId, hardwareSubId));
+        expect(response.status).toBe(409);
+        expect(response.body.error.code).toBe("DUPLICATE_TICKET");
+    });
+
     it("noveno a décimo activo es válido; undécimo falla", async () => {
         const user = await createTestUser();
         for (let index = 0; index < 9; index++) await createTestTicket(user, { room: `L${index}` });
@@ -255,6 +268,18 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(await prisma.ticket.count({ where: { reporterId: user.id, status: { in: [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS] } } })).toBe(10);
     });
 
+    it("COMPLETED no ocupa cupo y duplicateKey null permite reportar de nuevo", async () => {
+        const user = await createTestUser();
+        const first = await createTestTicket(user, { room: "REPEAT" });
+        for (let index = 1; index < 10; index++) await createTestTicket(user, { room: `ACTIVE${index}` });
+        await prisma.ticket.update({ where: { id: first.id }, data: {
+            status: TicketStatus.COMPLETED, completedAt: new Date(), duplicateKey: null,
+        } });
+        const repeated = await post(user, baseBody(hardwareId, hardwareSubId, "REPEAT"));
+        expect(repeated.status).toBe(201);
+        expect(await prisma.ticket.count({ where: { reporterId: user.id, status: TicketStatus.OPEN } })).toBe(10);
+    });
+
     it("la secuencia genera number/code coherentes para POST concurrentes distintos", async () => {
         const users = await Promise.all(Array.from({ length: 6 }, () => createTestUser()));
         const responses = await Promise.all(users.map((user, index) => post(user, baseBody(hardwareId, hardwareSubId, `P${index}`))));
@@ -271,7 +296,7 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const hardware = await createTestTicket(owner, { room: "RB1", title: "Proyector especial" });
         await createTestTicket(another, { room: "RB2" });
         const teacher = await createTestUser({ communityType: CommunityType.TEACHER });
-        await post(teacher, { ...baseBody(softwareId, null, "RB3"), software: {
+        await post(teacher, { ...baseBody(softwareId, null, "RB3"), title: "Instalación Editor", software: {
             name: "Editor", version: "1", downloadUrl: "https://example.com", coordinationApprovalReference: "OF-1",
         } });
         const hardwareSupport = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
@@ -282,7 +307,10 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             return request(app).get(`/api/v1/tickets${query}`).set("Cookie", cookie(user));
         }
         expect((await list(owner)).body.meta.total).toBe(1);
-        expect((await list(owner)).body.data[0].id).toBe(hardware.id);
+        const ownerList = await list(owner);
+        expect(ownerList.body.data[0].id).toBe(hardware.id);
+        expect(ownerList.body.data[0].duplicateKey).toBeUndefined();
+        expect(ownerList.body.data[0].reporterEmailSnapshot).toBeUndefined();
         expect((await list(hardwareSupport)).body.meta.total).toBe(2);
         expect((await list(multipleSupport)).body.meta.total).toBe(3);
         expect((await list(subManager)).body.meta.total).toBe(1);
@@ -297,6 +325,33 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect((await list(owner, `?assignedTo=${another.id}`)).status).toBe(403);
     });
 
+    it("filtros de status, prioridad, fechas y asignación usan el mismo scope", async () => {
+        const owner = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const high = await createTestTicket(owner, { room: "FILT1" });
+        const medium = await createTestTicket(owner, { subcategoryId: hardwareOtherSubId, room: "FILT2" });
+        await prisma.ticket.update({ where: { id: high.id }, data: {
+            status: TicketStatus.IN_PROGRESS, assigneeId: support.id, assignedAt: new Date(),
+        } });
+        const earlier = new Date(Date.now() - 86_400_000);
+        await prisma.ticket.update({ where: { id: medium.id }, data: { createdAt: earlier } });
+        async function list(user: typeof owner, query: string) {
+            return request(app).get(`/api/v1/tickets?${query}`).set("Cookie", cookie(user));
+        }
+        expect((await list(admin, "status=IN_PROGRESS")).body.meta.total).toBe(1);
+        expect((await list(admin, "priority=MEDIUM")).body.meta.total).toBe(1);
+        expect((await list(admin, `subcategoryId=${hardwareOtherSubId}`)).body.meta.total).toBe(1);
+        expect((await list(admin, `createdFrom=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`)).body.meta.total).toBe(1);
+        expect((await list(admin, `createdTo=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`)).body.meta.total).toBe(1);
+        expect((await list(admin, `assignedTo=${support.id}`)).body.meta.total).toBe(1);
+        expect((await list(support, "assignment=mine")).body.meta.total).toBe(1);
+        expect((await list(support, "assignment=unassigned")).body.meta.total).toBe(1);
+        expect((await list(support, "assignment=assigned")).body.meta.total).toBe(1);
+        expect((await list(owner, "assignment=mine")).status).toBe(403);
+        expect((await list(admin, "createdFrom=2026-01-02T00%3A00%3A00Z&createdTo=2026-01-01T00%3A00%3A00Z")).status).toBe(422);
+    });
+
     it("detalle preserva snapshots y aplica 404/403/200 por rol", async () => {
         const owner = await createTestUser({ fullName: "Antes" });
         const another = await createTestUser();
@@ -308,7 +363,9 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         async function detail(user: typeof owner, id: string) {
             return request(app).get(`/api/v1/tickets/${id}`).set("Cookie", cookie(user));
         }
-        expect((await detail(owner, ticket.id)).body.data.reporter.fullName).toBe("Antes");
+        const ownerDetail = await detail(owner, ticket.id);
+        expect(ownerDetail.body.data.reporter.fullName).toBe("Antes");
+        expect(ownerDetail.body.data.duplicateKey).toBeUndefined();
         expect((await detail(another, ticket.id)).body.error.code).toBe("FORBIDDEN_TICKET");
         expect((await detail(support, ticket.id)).status).toBe(200);
         expect((await detail(otherSupport, ticket.id)).status).toBe(403);
@@ -326,5 +383,49 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(response.body.data).toHaveLength(1);
         expect(response.body.data[0]).toMatchObject({ type: "CREATED", actor: { id: owner.id, fullName: owner.fullName }, toStatus: "OPEN", metadata: {} });
         expect((await request(app).get(`/api/v1/tickets/${ticket.id}/events`).set("Cookie", cookie(another))).status).toBe(403);
+    });
+
+    it("timeline ordena dos eventos y serializa actor de sistema como null", async () => {
+        const owner = await createTestUser();
+        const ticket = await createTestTicket(owner);
+        const first = await prisma.ticketEvent.findFirstOrThrow({ where: { ticketId: ticket.id } });
+        await prisma.ticketEvent.create({ data: {
+            ticketId: ticket.id, actorId: null, type: "STATUS_CHANGED", fromStatus: "OPEN", toStatus: "IN_REVIEW",
+            metadata: { note: "sistema" }, createdAt: new Date(first.createdAt.getTime() + 1000),
+        } });
+        const response = await request(app).get(`/api/v1/tickets/${ticket.id}/events`).set("Cookie", cookie(owner));
+        expect(response.status).toBe(200);
+        expect(response.body.data.map((event: { type: string }) => event.type)).toEqual(["CREATED", "STATUS_CHANGED"]);
+        expect(response.body.data[1].actor).toBeNull();
+    });
+
+    it("Ticket se revierte cuando falla la inserción del evento CREATED", async () => {
+        const user = await createTestUser();
+        if (!safe) throw new Error("La base de test no fue verificada.");
+        await prisma.$executeRawUnsafe(`CREATE FUNCTION test_core_reject_event() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'test event failure'; END; $$`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_core_reject_event BEFORE INSERT ON "TicketEvent" FOR EACH ROW EXECUTE FUNCTION test_core_reject_event()`);
+        try {
+            const response = await post(user, baseBody(hardwareId, hardwareSubId));
+            expect(response.status).toBe(500);
+            expect(response.body.error.code).toBe("INTERNAL_ERROR");
+            expect(await prisma.ticket.count()).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_event ON "TicketEvent"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_event()`);
+        }
+    });
+
+    it("las cuatro rutas exigen sesión", async () => {
+        const id = randomUUID();
+        for (const [method, path] of [
+            ["post", "/api/v1/tickets"], ["get", "/api/v1/tickets"],
+            ["get", `/api/v1/tickets/${id}`], ["get", `/api/v1/tickets/${id}/events`],
+        ] as const) {
+            const response = method === "post"
+                ? await request(app).post(path).send(baseBody(hardwareId, hardwareSubId))
+                : await request(app).get(path);
+            expect(response.status).toBe(401);
+            expect(response.body.error.code).toBe("AUTHENTICATION_REQUIRED");
+        }
     });
 });

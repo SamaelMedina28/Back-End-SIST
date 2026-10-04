@@ -908,7 +908,7 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.body.paths["/api/v1/categories/{id}"].patch).toBeDefined();
         expect(response.body.paths["/api/v1/catalog/ticket-form"].get).toBeDefined();
         expect(response.body.paths["/api/v1/auth/me"].get).toBeDefined();
-        expect(Object.keys(response.body.paths).some((path) => path.includes("tickets"))).toBe(false);
+        expect(Object.keys(response.body.paths).some((path) => path.includes("tickets"))).toBe(true);
     });
 
     it("serves Swagger UI at /api/docs", async () => {
@@ -918,10 +918,10 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.text).toContain("swagger-ui-bundle.js");
     });
 
-    it("returns standardized 404 for endpoints outside this stage", async () => {
+    it("requires authentication for the tickets route", async () => {
         const { app } = createContext();
-        const response = await request(app).get("/api/v1/tickets").expect(404);
+        const response = await request(app).get("/api/v1/tickets").expect(401);
         expect(response.body.success).toBe(false);
-        expect(response.body.error.code).toBe("ROUTE_NOT_FOUND");
+        expect(response.body.error.code).toBe("AUTHENTICATION_REQUIRED");
     });
 });
