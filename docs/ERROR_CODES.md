@@ -29,7 +29,7 @@ Las respuestas de error siguen el envelope del backend: `success: false`, `error
 | `TICKET_ALREADY_ASSIGNED`, `ASSIGNEE_AREA_MISMATCH`, `INVALID_ASSIGNEE_ROLE` | 409 / 422 | Asignación conflictiva o destino no elegible/compatible. |
 | `IDEMPOTENCY_CONFLICT` | 409 | La clave ya se usó con un body distinto; usar una nueva clave para otra operación. |
 | `SUPPORT_MEMBER_HAS_ACTIVE_TICKETS` | 409 | No se puede desactivar al técnico mientras tenga tickets activos asignados. |
-| `ASSIGNEE_AREA_MISMATCH`, `INVALID_ACTIVITY_PARTICIPANT_ROLE` | 422 | Área/asignación o rol de participante incompatible con la entidad. |
+| `INVALID_ACTIVITY_PARTICIPANT_ROLE` | 422 | Rol de participante incompatible con la entidad. |
 | `RATE_LIMIT_EXCEEDED` | 429 | Se excedió el límite temporal de OAuth/onboarding; esperar antes de reintentar. |
 | `INTERNAL_ERROR` | 500 | Error inesperado; conservar `requestId` para diagnóstico y no repetir operaciones de escritura a ciegas. |
 
