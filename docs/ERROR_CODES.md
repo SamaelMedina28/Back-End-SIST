@@ -26,10 +26,10 @@ Las respuestas de error siguen el envelope del backend: `success: false`, `error
 | `ACTIVE_TICKET_LIMIT_REACHED` | 409 | El usuario alcanzó el máximo de 10 tickets activos. |
 | `SOFTWARE_REQUEST_REQUIRES_TEACHER` | 403 | Solo una cuenta TEACHER puede crear esa solicitud de software. |
 | `INVALID_STATUS_TRANSITION`, `TICKET_NOT_ACTIVE`, `TICKET_STATE_NOT_ALLOWED_FOR_ACTIVITY` | 409 | La transición/actividad no es válida para el estado actual. |
-| `TICKET_ALREADY_ASSIGNED`, `ASSIGNEE_AREA_MISMATCH`, `INVALID_ASSIGNEE_ROLE` | 409 / 422 | Asignación conflictiva o destino no elegible/compatible. |
+| `TICKET_ALREADY_ASSIGNED`, `ASSIGNEE_AREA_MISMATCH`, `INVALID_ASSIGNEE_ROLE` | 409 | Asignación conflictiva o destino no elegible/compatible; revisar ticket y técnico. |
 | `IDEMPOTENCY_CONFLICT` | 409 | La clave ya se usó con un body distinto; usar una nueva clave para otra operación. |
 | `SUPPORT_MEMBER_HAS_ACTIVE_TICKETS` | 409 | No se puede desactivar al técnico mientras tenga tickets activos asignados. |
-| `INVALID_ACTIVITY_PARTICIPANT_ROLE` | 422 | Rol de participante incompatible con la entidad. |
+| `INVALID_ACTIVITY_PARTICIPANT_ROLE` | 409 | El participante no pertenece al equipo de soporte permitido para la bitácora. |
 | `RATE_LIMIT_EXCEEDED` | 429 | Se excedió el límite temporal de OAuth/onboarding; esperar antes de reintentar. |
 | `INTERNAL_ERROR` | 500 | Error inesperado; conservar `requestId` para diagnóstico y no repetir operaciones de escritura a ciegas. |
 
