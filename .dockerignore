@@ -1,0 +1,12 @@
+node_modules
+dist
+generated/prisma
+.git
+.env*
+!.env.example
+tests
+coverage
+.pnpm-store
+*.log
+README.md
+readme.md
