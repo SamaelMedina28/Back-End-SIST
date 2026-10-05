@@ -319,7 +319,7 @@ if (!response.ok) {
 }
 ```
 
-- `409 DUPLICATE_TICKET`: muestra que ya existe una incidencia activa para la misma categoría y ubicación.
+- `409 DUPLICATE_TICKET`: muestra que ya existe una incidencia activa para la misma categoría y ubicación; la subcategoría distinta no evita el duplicado.
 - `409 ACTIVE_TICKET_LIMIT_REACHED`: indica que el usuario alcanzó diez tickets activos.
 - `409 TICKET_PRIORITY_NOT_CONFIGURED`: pide elegir otra categoría o avisar a ADMIN para configurarla.
 - `422 VALIDATION_ERROR`: presenta `error.fields` junto a los campos del formulario; la descripción admite máximo 50 palabras.

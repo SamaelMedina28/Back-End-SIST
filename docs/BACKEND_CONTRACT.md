@@ -1,6 +1,6 @@
 # Contrato del backend — Sistema Integral de Soporte Técnico de la FCQI - UABC
 
-> Fuente de verdad para el desarrollo del backend. Esta etapa documenta el contrato y el diagnóstico del repositorio; no implementa todavía el sistema completo.
+> Contrato funcional canónico y decisiones finales de implementación. Este archivo conserva el requerimiento original; las resoluciones y adendas posteriores al texto normativo se indican explícitamente al final.
 >
 > El contenido normativo recibido se conserva a continuación, con formato Markdown para facilitar su consulta. Las discrepancias detectadas durante el análisis aparecen al final y no modifican silenciosamente este contrato.
 
@@ -590,22 +590,22 @@ Utilizar transacción/locking/aislamiento adecuado.
 Los tickets activos no pueden duplicarse usando:
 
 category
-subcategory
 building
 room
 
-Normalizar los valores.
+Normalizar la ubicación (Unicode NFKC, trim, minúsculas y espacios consecutivos colapsados).
 
 Generar duplicateKey determinística.
 
-Idealmente:
+Regla final de Etapa 12 (prevalece sobre la fórmula sugerida originalmente):
 
 SHA256(
   categoryId +
-  subcategoryId +
   normalizedBuilding +
   normalizedRoom
 )
+
+La subcategoría no participa en la clave. Se usa una representación canónica JSON de esos tres componentes antes de calcular SHA-256; un aula null es distinta de un valor no nulo.
 
 duplicateKey puede ser nullable y UNIQUE.
 
@@ -2120,6 +2120,8 @@ NO implementes todavía el sistema completo.
 
 ## Discrepancias y decisiones pendientes detectadas en el repositorio
 
+> El siguiente diagnóstico refleja el estado inicial del repositorio recibido, no el estado actual del backend. Las resoluciones finales se listan después de estas observaciones.
+
 Estas observaciones son parte del diagnóstico de esta etapa; deben resolverse explícitamente en una etapa de implementación:
 
 - El repositorio usa actualmente un modelo `User` entero con `password` y un modelo `Producto`; el contrato exige UUID, OAuth de Google y prohíbe contraseñas.
@@ -2129,5 +2131,20 @@ Estas observaciones son parte del diagnóstico de esta etapa; deben resolverse e
 - El flujo actual de autenticación implementa registro/login con bcrypt; debe sustituirse por Google OAuth administrado por Express. No se implementó el reemplazo en esta etapa.
 - El build inicial requirió generar el cliente Prisma porque `generated/prisma` está ignorado y no estaba disponible; generar artefactos de Prisma no cambia el contrato.
 - El contrato permite “cancelación según permisos definidos por backend” para estados de ticket, pero no fija una matriz exacta por rol. Debe definirse antes de implementar esa transición.
-- El contrato indica `duplicateKey` nullable y UNIQUE, pero no especifica la estrategia de índice para permitir múltiples valores NULL y garantizar unicidad solo en tickets activos; debe resolverse mediante una restricción/índice compatible con PostgreSQL.
+- El contrato inicial proponía subcategoría dentro de `duplicateKey`; la decisión explícita de Etapa 12 la excluye. El índice UNIQUE nullable existente permite múltiples tickets terminales con clave NULL y conserva unicidad de claves activas.
+
+## Resoluciones finales y adenda de contrato (Etapa 12)
+
+- **Duplicados:** regla final = `categoryId + normalizedBuilding + normalizedRoom`; ignora subcategoría. La normalización es NFKC, trim, minúsculas y colapso de whitespace. COMPLETED/CANCELLED asignan `duplicateKey = null`. La clave UNIQUE es la garantía ante concurrencia.
+- **Límite y numeración:** máximo 10 tickets activos por USER, serializado con lock de la fila del reportero; el número procede de la secuencia PostgreSQL y puede tener huecos tras rollback.
+- **OAuth:** Express implementa state, PKCE, email verificado, allowlist de dominio exacto y sesión propia. El login institucional real sigue pendiente de credenciales/prueba; pertenencia vigente a FCQI no se comprueba contra un directorio externo.
+- **Teléfono:** onboarding acepta teléfono ausente o null y el ticket usa `contactPhone ?? user.phone ?? null`. Se registra como supuesto de producto, no se endurece el requisito sin confirmación.
+- **Sugerencias:** endpoint implementado; no hay seed de contenido no autorizado y la lista puede ser vacía.
+- **Reglas no deterministas:** “no asuntos personales” queda como política operativa; no se implementó IA ni filtro heurístico.
+- **Activity Log:** creación/edición valida área, estado y participantes; cambios y revisiones se guardan atómicamente, revisiones son append-only y no-op no añade revisión.
+- **Inventario:** se reutiliza el modelo existente, campos de escritura explícitos, unicidad de asset/serie y baja lógica; el historial conserva snapshots.
+- **Dashboard/reportes:** scopes por rol/área, días locales a través de `APP_TIMEZONE`; reportes agregan en PostgreSQL y la cohorte de resueltos usa `completedAt`.
+- **Notificaciones:** el estado vigente incluye PENDING, PROCESSING, SENT, FAILED y SKIPPED. El outbox se reclama con lease recuperable; el envío es al menos una vez en la ventana incierta entre aceptación SMTP y persistencia de SENT.
+- **Mantenimiento del starter:** no hay endpoints ni migraciones demo en el contrato vigente; el CLI Vane original sigue siendo utilidad del repositorio, separado de la API de soporte y no se invoca durante el despliegue normal.
+- **Infraestructura:** pruebas de concurrencia no certifican 100 usuarios ni SLA. 99.5% de disponibilidad, RPO 12 h, RTO 2 h y backups son responsabilidades de plataforma/operaciones.
 - El contrato exige una colección inicial de categorías, pero no fija si se cargará mediante seed, migración o bootstrap. Debe decidirse antes de preparar datos iniciales.

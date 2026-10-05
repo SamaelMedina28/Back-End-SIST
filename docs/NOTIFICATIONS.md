@@ -40,7 +40,7 @@ Variables del proceso:
 | `REMINDER_JOB_ENABLED` | Activa la generación periódica de recordatorios |
 | `REMINDER_CHECK_INTERVAL_MS` | Intervalo de búsqueda de tickets vencidos |
 
-El ejemplo sin secretos está en `.env.example`. `pnpm test` usa un transporte falso y no contacta un SMTP real.
+El ejemplo sin secretos está en `.env.example`; ambos flags (`NOTIFICATION_WORKER_ENABLED` y `REMINDER_JOB_ENABLED`) están apagados inicialmente. El job de recordatorios requiere que el worker esté habilitado, y este necesita transporte SMTP real para producción. `pnpm test` usa un transporte falso y no contacta un SMTP real.
 
 ## Asignaciones notificadas
 

@@ -182,7 +182,7 @@ Crea un ticket y su evento inicial. Body JSON estricto:
 
 `title` tiene máximo 150 caracteres tras `trim`; `description`, máximo 50 palabras separadas por espacios Unicode. `room`, `contactPhone` e `inventoryItemId` son opcionales o null; `subcategoryId` también acepta null, pero es obligatoria cuando la categoría tiene subcategorías activas. El teléfono acepta formatos habituales con al menos siete dígitos. Si `category.requiresSoftwareDetails` es true, solo `TEACHER` puede crear la solicitud y debe añadir `software` completo: `name`, `version`, `downloadUrl` (URL válida) y `coordinationApprovalReference`. En otras categorías, `software` se rechaza. Se valida que el inventario exista y esté activo cuando se indica un artículo.
 
-El backend calcula `priority = subcategory.priority ?? category.defaultPriority`; si ambas son null responde `409 TICKET_PRIORITY_NOT_CONFIGURED`. Guarda `status=OPEN`, snapshots del reportero y teléfono `contactPhone ?? user.phone ?? null`. Genera `number` desde la secuencia PostgreSQL y `code` como `TK-` más el número con al menos seis dígitos. La ubicación visible conserva sus valores recortados; `duplicateKey` usa SHA-256 de categoría, subcategoría y ubicación normalizada NFKC/minúsculas/espacios colapsados. El índice único impide duplicados activos incluso entre reporteros. `Ticket` y `TicketEvent CREATED` se guardan en la misma transacción.
+El backend calcula `priority = subcategory.priority ?? category.defaultPriority`; si ambas son null responde `409 TICKET_PRIORITY_NOT_CONFIGURED`. Guarda `status=OPEN`, snapshots del reportero y teléfono `contactPhone ?? user.phone ?? null`. Genera `number` desde la secuencia PostgreSQL y `code` como `TK-` más el número con al menos seis dígitos. La ubicación visible conserva sus valores recortados; `duplicateKey` usa SHA-256 de `categoryId` más edificio y aula normalizados con NFKC, trim, minúsculas y espacios colapsados. **La subcategoría no forma parte de la clave**: una incidencia de la misma categoría y ubicación activa no puede repetirse aunque se elija otra subcategoría. El índice único impide duplicados activos incluso entre reporteros. `Ticket` y `TicketEvent CREATED` se guardan en la misma transacción.
 
 Respuesta `201`:
 
@@ -277,7 +277,21 @@ Solo `ADMIN`, para tickets activos. Body: `{ "priority": "HIGH", "reason": "Impa
 - Swagger UI: `GET /api/docs`
 - OpenAPI JSON: `GET /api/openapi.json`
 
-El documento describe las rutas implementadas de auth, perfil, catálogo, categorías, subcategorías, Tickets Core, asignación, estado, prioridad y health/readiness.
+El documento describe las 42 operaciones funcionales bajo `/api/v1`, además de salud y readiness. También están disponibles Swagger UI (`GET /api/docs`) y OpenAPI JSON (`GET /api/openapi.json`). Una prueba mantiene el inventario conocido sincronizado con OpenAPI y estos encabezados.
+
+## Salud y documentación
+
+### `GET /health`
+
+No consulta PostgreSQL. Responde `200` cuando el proceso HTTP está activo.
+
+### `GET /ready`
+
+Consulta PostgreSQL. Responde `200` si la base está disponible y `503` si no lo está.
+
+### `GET /api/docs` y `GET /api/openapi.json`
+
+Swagger UI y el documento OpenAPI servido por la aplicación, respectivamente.
 
 ## Ejemplo del helper frontend
 
