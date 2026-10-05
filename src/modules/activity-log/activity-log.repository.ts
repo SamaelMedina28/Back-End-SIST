@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from "../../../generated/prisma/client.js";
+import { Prisma, Role, type PrismaClient } from "../../../generated/prisma/client.js";
 import type {
     ActivityLogPatchTransaction, ActivityLogRecord, ActivityLogRepository, ActivityLogRevisionRecord,
     ActivityLogTicketSnapshot, ActivityLogTransaction, ActivityLogQuery,
@@ -22,6 +22,21 @@ function sortedIds(ids: string[]): string[] {
 
 export class PrismaActivityLogRepository implements ActivityLogRepository {
     constructor(private readonly prisma: PrismaClient) {}
+
+    async findTicketSupportArea(ticketId: string): Promise<{ supportArea: string } | null> {
+        const ticket = await this.prisma.ticket.findUnique({
+            where: { id: ticketId }, select: { category: { select: { supportArea: true } } },
+        });
+        return ticket ? { supportArea: ticket.category.supportArea } : null;
+    }
+
+    listParticipantCandidates(): Promise<Array<{ id: string; fullName: string; role: string }>> {
+        return this.prisma.user.findMany({
+            where: { isActive: true, role: { in: [Role.SUPPORT, Role.SUB_MANAGER, Role.ADMIN] } },
+            select: { id: true, fullName: true, role: true },
+            orderBy: [{ fullName: "asc" }, { id: "asc" }],
+        });
+    }
 
     async createWithLockedTicket<T>(ticketId: string, operation: (tx: ActivityLogTransaction) => Promise<T>): Promise<T> {
         return this.prisma.$transaction(async (tx) => {

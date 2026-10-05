@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import { sendSuccess } from "../../common/http/response.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import type { ActivityLogCreateInput, ActivityLogPatchInput, ActivityLogQuery } from "./activity-log.types.js";
+import type { ActivityLogParticipantsQuery } from "./activity-log.schema.js";
 import { ActivityLogService } from "./activity-log.service.js";
 
 export class ActivityLogController {
@@ -10,6 +11,11 @@ export class ActivityLogController {
     list = async (req: Request, res: Response): Promise<void> => {
         const result = await this.service.list(req.user as AuthenticatedUser, req.query as unknown as ActivityLogQuery);
         res.json({ success: true, data: result.data, meta: result.meta });
+    };
+
+    participantCandidates = async (req: Request, res: Response): Promise<void> => {
+        const query = req.query as unknown as ActivityLogParticipantsQuery;
+        sendSuccess(res, await this.service.participantCandidates(req.user as AuthenticatedUser, query.ticketId));
     };
 
     create = async (req: Request, res: Response): Promise<void> => {

@@ -97,8 +97,8 @@ function validateActivityValues(value: {
     }
 }
 
-function requireSubManagerOrAdmin(user: AuthenticatedUser): void {
-    if (user.role !== Role.SUB_MANAGER && user.role !== Role.ADMIN) fail(403, "FORBIDDEN", "No tienes permisos para modificar la bitácora.");
+function requireSubManagerOrAdmin(user: AuthenticatedUser, message = "No tienes permisos para modificar la bitácora."): void {
+    if (user.role !== Role.SUB_MANAGER && user.role !== Role.ADMIN) fail(403, "FORBIDDEN", message);
 }
 
 function assertArea(user: AuthenticatedUser, supportArea: string, errorCode = "TICKET_OUTSIDE_SUPPORT_AREA"): void {
@@ -148,6 +148,14 @@ function toRevision(revision: ActivityLogRevisionRecord) {
 
 export class ActivityLogService {
     constructor(private readonly activityLogs: ActivityLogRepository) {}
+
+    async participantCandidates(user: AuthenticatedUser, ticketId: string) {
+        requireSubManagerOrAdmin(user, "No tienes permisos para consultar participantes de la bitácora.");
+        const ticket = await this.activityLogs.findTicketSupportArea(ticketId);
+        if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
+        if (user.role === Role.SUB_MANAGER) assertArea(user, ticket.supportArea);
+        return this.activityLogs.listParticipantCandidates();
+    }
 
     async create(user: AuthenticatedUser, input: ActivityLogCreateInput) {
         requireSubManagerOrAdmin(user);

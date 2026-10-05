@@ -85,6 +85,7 @@ export function createApiRouter(input: {
     }));
     router.use("/catalog", createCatalogRouter({
         controller: catalogController,
+        activityLogController,
         users: input.users,
         sessions,
         config: input.config,

@@ -330,6 +330,13 @@ Permisos: `SUPPORT` consulta; `SUB_MANAGER` consulta, registra y modifica dentro
 
 El formulario de D11 envía ticket, actividad, participantes, inicio, fin opcional, tiempo efectivo y estado. No envíes los snapshots ni el creador. El ticket debe estar `IN_PROGRESS` o `COMPLETED`; una actividad solo admite `IN_PROGRESS` o `COMPLETED`. Para COMPLETED exige fecha final. Los minutos representan dedicación efectiva y no se calculan a partir del intervalo.
 
+Para poblar el selector de participantes de un ticket, `SUB_MANAGER` y `ADMIN` consultan el catálogo contextual. El servidor deriva el área desde el ticket y solo permite a `SUB_MANAGER` consultar tickets de sus áreas. Devuelve `id`, `fullName` y `role` de usuarios activos con rol permitido. `SUPPORT` es de solo lectura y `USER` no tiene acceso. No uses `/support-members` para este selector: sigue siendo `ADMIN`-only. Aunque el selector use este catálogo, el POST vuelve a validar cada `participantId` y exige una lista no vacía.
+
+```ts
+const { data: candidates } = await api(`/catalog/activity-log-participants?ticketId=${ticketId}`);
+// [{ id, fullName, role }]
+```
+
 ```ts
 const response = await fetch(`${API_URL}/api/v1/activity-log?page=1&pageSize=20`, {
   credentials: "include",

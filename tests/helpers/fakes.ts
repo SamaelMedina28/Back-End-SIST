@@ -65,6 +65,8 @@ export class FakeTicketRepository implements TicketRepository {
 
 export class FakeActivityLogRepository implements ActivityLogRepository {
     private unused(): never { throw new Error("FakeActivityLogRepository: activity-log method was not configured for this test"); }
+    async findTicketSupportArea(): Promise<null> { return this.unused(); }
+    async listParticipantCandidates(): Promise<never> { return this.unused(); }
     async createWithLockedTicket<T>(): Promise<T> { return this.unused(); }
     async list(): Promise<never> { return this.unused(); }
     async findById(): Promise<null> { return this.unused(); }

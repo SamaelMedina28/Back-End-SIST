@@ -6,6 +6,7 @@ const functionalRoutes = [
     "GET /api/v1/auth/google", "GET /api/v1/auth/google/callback", "POST /api/v1/auth/complete-profile",
     "GET /api/v1/auth/me", "POST /api/v1/auth/logout", "PATCH /api/v1/users/me",
     "GET /api/v1/catalog/ticket-form", "GET /api/v1/catalog/support-suggestions",
+    "GET /api/v1/catalog/activity-log-participants",
     "GET /api/v1/categories", "POST /api/v1/categories", "PATCH /api/v1/categories/{id}",
     "DELETE /api/v1/categories/{id}", "POST /api/v1/categories/{categoryId}/subcategories",
     "PATCH /api/v1/subcategories/{id}", "DELETE /api/v1/subcategories/{id}",

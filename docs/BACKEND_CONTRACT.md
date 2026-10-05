@@ -1307,6 +1307,18 @@ updatedAt
 Participantes:
 relación N:M con User.
 
+GET /api/v1/catalog/activity-log-participants?ticketId=<uuid>
+
+SUB_MANAGER y ADMIN.
+ticketId obligatorio; el área se deriva de Ticket.category.supportArea.
+SUB_MANAGER solo puede consultar tickets dentro de sus supportAreas.
+Devuelve usuarios activos con rol SUPPORT, SUB_MANAGER o ADMIN; campos mínimos:
+id, fullName, role.
+No expone PII ni amplía GET /api/v1/support-members (ADMIN-only).
+POST /api/v1/activity-log conserva participantIds obligatorio, no vacío y su
+validación server-side de existencia, actividad y rol; no se agrega regla de
+área para participantes, pues el validador actual no la aplica.
+
 GET /api/v1/activity-log
 
 ### SUPPORT
@@ -1948,6 +1960,7 @@ PATCH   /api/v1/users/me
 
 GET     /api/v1/catalog/ticket-form
 GET     /api/v1/catalog/support-suggestions
+GET     /api/v1/catalog/activity-log-participants
 
 ### CATEGORIES
 

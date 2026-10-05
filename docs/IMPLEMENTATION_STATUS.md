@@ -47,7 +47,11 @@
 
 ## Rutas
 
-El inventario vigente contiene 42 operaciones funcionales bajo `/api/v1`, más `GET /health` y `GET /ready`. También se sirven `GET /api/docs` y `GET /api/openapi.json`. La prueba de contrato compara operaciones funcionales conocidas contra OpenAPI y `docs/API.md`; la referencia de uso es [API.md](API.md).
+El inventario vigente contiene 43 operaciones funcionales bajo `/api/v1`, más `GET /health` y `GET /ready`. También se sirven `GET /api/docs` y `GET /api/openapi.json`. La prueba de contrato compara operaciones funcionales conocidas contra OpenAPI y `docs/API.md`; la referencia de uso es [API.md](API.md).
+
+### Parche post-auditoría: catálogo de participantes de bitácora
+
+Se añadió `GET /api/v1/catalog/activity-log-participants?ticketId=<uuid>` para `SUB_MANAGER` dentro de sus áreas y `ADMIN`. Devuelve los campos mínimos de usuarios activos elegibles según el validador existente del POST. `/support-members` sigue `ADMIN`-only; `participantIds` se valida nuevamente en servidor. No requiere migración.
 
 ## Etapa 12: cambios de auditoría
 

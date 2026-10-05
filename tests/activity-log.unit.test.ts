@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { Role, SupportArea, TicketStatus } from "../generated/prisma/client.js";
-import { activityLogCreateSchema, activityLogListQuerySchema, activityLogPatchSchema } from "../src/modules/activity-log/activity-log.schema.js";
+import { activityLogCreateSchema, activityLogListQuerySchema, activityLogParticipantsQuerySchema, activityLogPatchSchema } from "../src/modules/activity-log/activity-log.schema.js";
 import { activityLogFilterFor, activityLogStatesEqual, canonicalActivityData, toActivityLogDetail } from "../src/modules/activity-log/activity-log.service.js";
 import type { ActivityLogRecord } from "../src/modules/activity-log/activity-log.types.js";
 import { makeUser } from "./helpers/fakes.js";
@@ -29,6 +29,13 @@ describe("Activity Log helpers and schemas", () => {
         expect(activityLogCreateSchema.safeParse(validCreate({ activity: "  " })).success).toBe(false);
         expect(activityLogCreateSchema.safeParse(validCreate({ timeSpentMinutes: 0 })).success).toBe(false);
         expect(activityLogCreateSchema.safeParse(validCreate({ timeSpentMinutes: 1.5 })).success).toBe(false);
+    });
+
+    it("exige únicamente un ticketId UUID para el catálogo contextual de participantes", () => {
+        expect(activityLogParticipantsQuerySchema.safeParse({ ticketId: randomUUID() }).success).toBe(true);
+        expect(activityLogParticipantsQuerySchema.safeParse({}).success).toBe(false);
+        expect(activityLogParticipantsQuerySchema.safeParse({ ticketId: "no-uuid" }).success).toBe(false);
+        expect(activityLogParticipantsQuerySchema.safeParse({ ticketId: randomUUID(), supportArea: "HARDWARE" }).success).toBe(false);
     });
 
     it("mantiene PATCH estricto y valida campos parciales editables", () => {

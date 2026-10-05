@@ -53,4 +53,9 @@ export const activityLogListQuerySchema = z.object({
     message: "from debe ser anterior o igual a to", path: ["from"],
 });
 
+export const activityLogParticipantsQuerySchema = z.object({
+    ticketId: uuid,
+}).strict();
+export type ActivityLogParticipantsQuery = z.infer<typeof activityLogParticipantsQuerySchema>;
+
 export const activityLogIdParamsSchema = z.object({ id: uuid });

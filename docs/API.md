@@ -277,7 +277,7 @@ Solo `ADMIN`, para tickets activos. Body: `{ "priority": "HIGH", "reason": "Impa
 - Swagger UI: `GET /api/docs`
 - OpenAPI JSON: `GET /api/openapi.json`
 
-El documento describe las 42 operaciones funcionales bajo `/api/v1`, además de salud y readiness. También están disponibles Swagger UI (`GET /api/docs`) y OpenAPI JSON (`GET /api/openapi.json`). Una prueba mantiene el inventario conocido sincronizado con OpenAPI y estos encabezados.
+El documento describe las 43 operaciones funcionales bajo `/api/v1`, además de salud y readiness. También están disponibles Swagger UI (`GET /api/docs`) y OpenAPI JSON (`GET /api/openapi.json`). Una prueba mantiene el inventario conocido sincronizado con OpenAPI y estos encabezados.
 
 ## Salud y documentación
 
@@ -334,6 +334,17 @@ Requiere cookie de sesión; no recibe body ni necesita query. El backend toma el
 ## Bitácora y auditoría
 
 Los estados de una actividad son `IN_PROGRESS` y `COMPLETED`. El ticket relacionado debe estar `IN_PROGRESS` o `COMPLETED`. Los snapshots de ticket y reportero los genera el backend desde el ticket; las actualizaciones posteriores del ticket no los sincronizan.
+
+### `GET /api/v1/catalog/activity-log-participants`
+
+Roles: `SUB_MANAGER` y `ADMIN`. Requiere `ticketId` UUID; el backend carga el ticket y obtiene el área desde su categoría, sin aceptar `supportArea` del cliente. Un `SUB_MANAGER` solo puede consultar tickets dentro de sus áreas; `USER` y `SUPPORT` reciben `403`. Devuelve una lista simple y ordenada con `{ id, fullName, role }` para usuarios activos con rol `SUPPORT`, `SUB_MANAGER` o `ADMIN`. No es una vista de `/support-members` y no incluye correo, identificador institucional ni datos de autenticación. Errores: `403 FORBIDDEN` / `TICKET_OUTSIDE_SUPPORT_AREA`, `404 TICKET_NOT_FOUND`, `422 VALIDATION_ERROR`.
+
+La lista refleja los criterios que actualmente aplica `POST /activity-log`: cuenta activa y rol permitido; el POST sigue siendo la autoridad y vuelve a validar `participantIds` recibidos, que continúa siendo obligatorio, no vacío y único. El validador actual no restringe el área de los participantes; el área se usa aquí para autorizar el acceso del `SUB_MANAGER` al ticket. `/support-members` permanece `ADMIN`-only.
+
+```ts
+const candidates = await api(`/catalog/activity-log-participants?ticketId=${ticketId}`);
+// candidates.data: [{ id, fullName, role }]
+```
 
 ### `GET /api/v1/activity-log`
 

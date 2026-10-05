@@ -191,6 +191,22 @@ export const openApiDocument = {
                 },
             }),
         },
+        "/api/v1/catalog/activity-log-participants": {
+            get: operation({
+                summary: "Consultar candidatos de participantes para bitácora",
+                description: "Solo SUB_MANAGER y ADMIN. Requiere un ticket existente; el área se obtiene de su categoría. SUB_MANAGER solo consulta tickets dentro de sus supportAreas. Devuelve únicamente usuarios activos con rol SUPPORT, SUB_MANAGER o ADMIN (los mismos criterios de participante que valida POST /activity-log); no expone PII ni reemplaza la validación server-side de participantIds. No amplía /support-members, que permanece ADMIN-only.",
+                tags: ["Catalog"], security: cookieSecurity, roles: ["SUB_MANAGER", "ADMIN"],
+                parameters: [
+                    { name: "ticketId", in: "query", required: true, schema: { type: "string", format: "uuid" } },
+                ],
+                responses: {
+                    200: successResponse("Candidatos activos ordenados por nombre e id.", {
+                        type: "array", items: { $ref: "#/components/schemas/ActivityLogParticipantCandidate" },
+                    }),
+                    ...errorResponses([401, 403, 404, 422]),
+                },
+            }),
+        },
         "/api/v1/categories": {
             get: operation({
                 summary: "Listar categorías",
@@ -790,6 +806,11 @@ export const openApiDocument = {
             ] },
             ActivityLogTicket: { type: "object", required: ["id", "code", "title"], properties: { id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" } } },
             ActivityLogParticipant: { type: "object", required: ["id", "fullName"], properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" } } },
+            ActivityLogParticipantCandidate: { type: "object", additionalProperties: false,
+                required: ["id", "fullName", "role"], properties: {
+                    id: { type: "string", format: "uuid" }, fullName: { type: "string" },
+                    role: { type: "string", enum: ["SUPPORT", "SUB_MANAGER", "ADMIN"] },
+                } },
             ActivityLogRevision: { type: "object", required: ["id", "changedBy", "previousData", "newData", "createdAt"], properties: {
                 id: { type: "string", format: "uuid" }, changedBy: { $ref: "#/components/schemas/ActivityLogParticipant" },
                 previousData: { $ref: "#/components/schemas/ActivityLogRevisionData" }, newData: { $ref: "#/components/schemas/ActivityLogRevisionData" }, createdAt: { type: "string", format: "date-time" },

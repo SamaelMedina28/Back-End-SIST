@@ -949,6 +949,8 @@ describe("OpenAPI and Swagger UI", () => {
         const response = await request(app).get("/api/openapi.json").expect(200);
         expect(response.body.paths["/api/v1/categories/{id}"].patch).toBeDefined();
         expect(response.body.paths["/api/v1/catalog/ticket-form"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/catalog/activity-log-participants"].get).toBeDefined();
+        expect(response.body.components.schemas.ActivityLogParticipantCandidate).toBeDefined();
         expect(response.body.paths["/api/v1/auth/me"].get).toBeDefined();
         expect(response.body.paths["/api/v1/tickets"].post).toBeDefined();
         expect(response.body.paths["/api/v1/tickets"].get).toBeDefined();

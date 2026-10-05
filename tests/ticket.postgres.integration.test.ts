@@ -950,6 +950,47 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(detail.body.data.ticket.title).toBe("Título original");
     });
 
+    it("sirve candidatos contextualizados, respeta roles/área del actor y no expone PII", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        const outsideManager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.SOFTWARE] });
+        const supportActor = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE], fullName: "Soporte compatible" });
+        const otherAreaManager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.SOFTWARE], fullName: "Supervisora otra área" });
+        const adminParticipant = await createTestUser({ role: Role.ADMIN, fullName: "Admin participante" });
+        const inactive = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE], fullName: "Soporte inactivo" });
+        const regularUser = await createTestUser({ fullName: "Usuario no elegible" });
+        await prisma.user.update({ where: { id: inactive.id }, data: { isActive: false } });
+        const ticket = await createTestTicket(reporter, { room: "ACTIVITY-PARTICIPANT-CATALOG" });
+        const url = `/api/v1/catalog/activity-log-participants?ticketId=${ticket.id}`;
+
+        const managerResponse = await request(app).get(url).set("Cookie", cookie(manager)).expect(200);
+        expect(managerResponse.body.success).toBe(true);
+        expect(managerResponse.body.data.map((candidate: { id: string }) => candidate.id).sort()).toEqual([
+            adminParticipant.id, manager.id, outsideManager.id, supportActor.id, support.id, otherAreaManager.id,
+        ].sort());
+        expect(managerResponse.body.data[0]).toEqual({ id: adminParticipant.id, fullName: "Admin participante", role: Role.ADMIN });
+        for (const candidate of managerResponse.body.data as Array<Record<string, unknown>>) {
+            expect(Object.keys(candidate).sort()).toEqual(["fullName", "id", "role"]);
+            for (const privateField of ["email", "institutionalId", "googleSubject", "lastLoginAt", "phone", "supportAreas"])
+                expect(candidate).not.toHaveProperty(privateField);
+        }
+
+        const admin = await createTestUser({ role: Role.ADMIN });
+        await request(app).get(url).set("Cookie", cookie(admin)).expect(200);
+        await request(app).get(url).set("Cookie", cookie(regularUser)).expect(403);
+        await request(app).get(url).set("Cookie", cookie(supportActor)).expect(403);
+        expect((await request(app).get(`/api/v1/catalog/activity-log-participants?ticketId=${randomUUID()}`).set("Cookie", cookie(manager))).body.error.code)
+            .toBe("TICKET_NOT_FOUND");
+        await request(app).get("/api/v1/catalog/activity-log-participants").set("Cookie", cookie(manager)).expect(422);
+        await request(app).get("/api/v1/catalog/activity-log-participants?ticketId=bad-uuid").set("Cookie", cookie(manager)).expect(422);
+        await request(app).get(`${url}&supportArea=SOFTWARE`).set("Cookie", cookie(manager)).expect(422);
+        expect((await request(app).get(url).set("Cookie", cookie(outsideManager))).body.error.code).toBe("TICKET_OUTSIDE_SUPPORT_AREA");
+
+        await request(app).get("/api/v1/support-members").set("Cookie", cookie(manager)).expect(403);
+        await request(app).get("/api/v1/support-members").set("Cookie", cookie(admin)).expect(200);
+    });
+
     it("valida permisos, área del ticket, estado permitido y participantes", async () => {
         const reporter = await createTestUser();
         const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });

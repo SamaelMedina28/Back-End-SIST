@@ -103,6 +103,8 @@ export interface ActivityLogPatchTransaction {
 }
 
 export interface ActivityLogRepository {
+    findTicketSupportArea(ticketId: string): Promise<{ supportArea: string } | null>;
+    listParticipantCandidates(): Promise<Array<{ id: string; fullName: string; role: string }>>;
     createWithLockedTicket<T>(ticketId: string, operation: (tx: ActivityLogTransaction) => Promise<T>): Promise<T>;
     list(where: Record<string, unknown>, query: ActivityLogQuery): Promise<{ records: ActivityLogRecord[]; total: number }>;
     findById(id: string): Promise<ActivityLogRecord | null>;
