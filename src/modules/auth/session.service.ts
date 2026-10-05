@@ -1,4 +1,4 @@
-import jwt, { TokenExpiredError, type SignOptions } from "jsonwebtoken";
+import jwt, { type SignOptions } from "jsonwebtoken";
 import { AppError } from "../../common/errors/app-error.js";
 import type { AppConfig } from "../../config/env.js";
 import type { OnboardingClaims, SessionClaims } from "../../types/auth.js";
@@ -66,7 +66,7 @@ export class SessionService {
                 purpose: "onboarding",
             };
         } catch (error) {
-            if (error instanceof TokenExpiredError) {
+            if (error instanceof jwt.TokenExpiredError) {
                 throw new AppError(401, "ONBOARDING_EXPIRED", "El onboarding expiró.");
             }
             if (error instanceof AppError) {
