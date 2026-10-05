@@ -1673,6 +1673,17 @@ Respuesta:
   }
 }
 
+### Decisiones de implementación del reporte (Etapa 10)
+
+- `from` y `to` son fechas locales reales `YYYY-MM-DD`, ambas obligatorias y con `from <= to`. El periodo incluye ambos días locales y se consulta como intervalo UTC `[inicio de from, inicio del día siguiente a to)` usando `APP_TIMEZONE`.
+- `ticketsCreated` cuenta todos los tickets creados en el periodo, sin excluir estados actuales. `ticketsCompleted` cuenta tickets actualmente `COMPLETED` cuyo `completedAt` cae en el periodo, aunque se crearan antes.
+- `pending` cuenta tickets creados en el periodo que **actualmente** están `OPEN`, `IN_REVIEW` o `IN_PROGRESS`; no es una reconstrucción histórica al cierre del día.
+- `averageResolutionMinutes` promedia `completedAt - createdAt` sobre la cohorte de `ticketsCompleted`, redondeado al entero más cercano; vale `0` si no hay completados.
+- `supportArea` filtra por `Ticket.category.supportArea`; `categoryId` por `Ticket.categoryId`; `technicianId` por `Ticket.assigneeId` actual/final. Los filtros se combinan con AND y rigen todos los agregados. UUID válidos sin coincidencias producen un reporte vacío.
+- `byCategory` agrupa tickets creados en el periodo y omite categorías con cero; ordena por `count DESC`, `category ASC`, `categoryId ASC`. `byTechnician` incluye SUPPORT/SUB_MANAGER con actividad, incluso inactivos: `completed` corresponde a la cohorte completada y `active` a tickets creados en el periodo que siguen activos, ambos asignados; omite no asignados y ordena por `completed DESC`, `active DESC`, `name ASC`, `technicianId ASC`.
+- `daily` cuenta creaciones por `createdAt` y completados por `completedAt` según el día local de `APP_TIMEZONE`, e incluye con ceros todos los días del periodo. Las métricas de creación y resolución son cohortes distintas y no deben sumarse entre sí.
+- La respuesta conserva exactamente `summary`, `byCategory`, `byTechnician` y `daily` bajo `data`; `period` y `filters` no se agregan porque la forma anterior de respuesta ya estaba definida.
+
 ## 34. NOTIFICACIONES
 
 NotificationOutbox:

@@ -11,6 +11,10 @@ const rawEnvSchema = z.object({
     GOOGLE_CLIENT_SECRET: z.string().min(1, "GOOGLE_CLIENT_SECRET es obligatorio."),
     GOOGLE_REDIRECT_URI: z.url("GOOGLE_REDIRECT_URI debe ser una URL válida."),
     ALLOWED_EMAIL_DOMAINS: z.string().min(1, "ALLOWED_EMAIL_DOMAINS es obligatorio."),
+    APP_TIMEZONE: z.string().min(1).default("America/Tijuana").refine((value) => {
+        try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
+        catch { return false; }
+    }, "APP_TIMEZONE debe ser una zona horaria IANA válida."),
 });
 
 export interface AppConfig {
@@ -24,6 +28,7 @@ export interface AppConfig {
     googleClientSecret: string;
     googleRedirectUri: string;
     allowedEmailDomains: string[];
+    appTimezone: string;
 }
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -48,6 +53,6 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         googleClientSecret: parsed.GOOGLE_CLIENT_SECRET,
         googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
         allowedEmailDomains,
+        appTimezone: parsed.APP_TIMEZONE,
     };
 }
-

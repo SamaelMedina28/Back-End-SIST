@@ -11,6 +11,9 @@ import type { CatalogRepository } from "./modules/category/category.types.js";
 import type { TicketRepository } from "./modules/ticket/ticket.types.js";
 import type { ActivityLogRepository } from "./modules/activity-log/activity-log.types.js";
 import type { InventoryRepository } from "./modules/inventory/inventory.types.js";
+import type { SupportMemberRepository } from "./modules/support-member/support-member.types.js";
+import type { DashboardRepository } from "./modules/dashboard/dashboard.types.js";
+import type { ReportRepository } from "./modules/report/report.types.js";
 import swaggerUi from "swagger-ui-express";
 import { HealthController } from "./modules/health/health.controller.js";
 import { createApiRouter } from "./routes/index.js";
@@ -23,6 +26,10 @@ export interface AppDependencies {
     tickets: TicketRepository;
     activityLogs: ActivityLogRepository;
     inventory: InventoryRepository;
+    supportMembers: SupportMemberRepository;
+    dashboard: DashboardRepository;
+    reports: ReportRepository;
+    dashboardClock?: () => Date;
     google: GoogleIdentityProvider;
     checkDatabase: () => Promise<void>;
 }
@@ -67,6 +74,10 @@ export function createApp(dependencies: AppDependencies): Application {
         tickets: dependencies.tickets,
         activityLogs: dependencies.activityLogs,
         inventory: dependencies.inventory,
+        supportMembers: dependencies.supportMembers,
+        dashboard: dependencies.dashboard,
+        reports: dependencies.reports,
+        ...(dependencies.dashboardClock ? { dashboardClock: dependencies.dashboardClock } : {}),
         google: dependencies.google,
     }));
 

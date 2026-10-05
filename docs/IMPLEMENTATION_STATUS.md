@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 7: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 10: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -32,7 +32,11 @@
 | Timeline / eventos de ticket | DONE | 1/1 de esta etapa | CREATED, orden, actor y RBAC |
 | Autoasignación y asignación administrativa | DONE | 3/13 | PostgreSQL real: concurrencia, área, idempotencia de asignación y eventos |
 | Estados, prioridad e idempotencia | DONE | 2/13 | PostgreSQL real: permisos, transiciones, cierre, replay/conflicto y prioridad |
-| Dashboard | NOT_STARTED | 0/1 | 0 |
+| Dashboard USER | DONE | 1/1 compartido | PostgreSQL real: ámbito propio, estados, recientes y vacío |
+| Dashboard SUPPORT | DONE | 1/1 compartido | PostgreSQL real: áreas, prioridades y completados locales |
+| Dashboard SUB_MANAGER | DONE | 1/1 compartido | PostgreSQL real: mismas métricas y múltiples áreas |
+| Dashboard ADMIN | DONE | 1/1 compartido | PostgreSQL real: global, inventario y carga sin N+1 |
+| Dashboard PostgreSQL tests | DONE | Incluidos en suite Tickets Core | Zona horaria, volumen y guard `support_system_test` |
 | Activity Log lectura, filtros y detalle | DONE | 2/5 | PostgreSQL real: RBAC, áreas, filtros, búsqueda, fechas y paginación |
 | Activity Log creación y snapshots | DONE | 1/5 | PostgreSQL real: ticket, estados, participantes, transacción y snapshots históricos |
 | Activity Log actualización | DONE | 1/5 | PostgreSQL real: validación combinada, no-op, participantes y PATCH concurrentes |
@@ -45,8 +49,14 @@
 | Inventory soft delete | DONE | 1/6 | PostgreSQL real: idempotencia, UNIQUE histórico y relación de tickets |
 | Inventory ticket history | DONE | 1/6 | PostgreSQL real: reporter snapshot, filtros, orden y paginación |
 | Tests PostgreSQL de inventario | DONE | Incluidos en suite Tickets Core | Guard estricto y `support_system_test` |
-| Miembros de soporte | NOT_STARTED | 0/5 | 0 |
-| Reportes | NOT_STARTED | 0/1 | 0 |
+| Support Members list | DONE | 1/5 | PostgreSQL real: filtros, paginación, orden, selector y RBAC |
+| Support Members create | DONE | 1/5 | PostgreSQL real: preaprovisionamiento, validación estricta y UNIQUE concurrente |
+| Support Members detail | DONE | 1/5 | PostgreSQL real: inactivos, UUID inválido y 404 |
+| Support Members update | DONE | 1/5 | PostgreSQL real: rol, áreas, habilidades, reactivación y no-op |
+| Support Members soft delete | DONE | 1/5 | PostgreSQL real: idempotencia, tickets activos y carrera con asignación |
+| Support Member OAuth integration | DONE | Incluido en OAuth | PostgreSQL real: vinculación, conservación de rol y rechazo de inactivos |
+| Support Member PostgreSQL tests | DONE | Incluidos en suite Tickets Core | Guard estricto de `support_system_test` |
+| Reportes | DONE | 1/1 | PostgreSQL real: RBAC, validación, cohortes, filtros, días locales y técnicos inactivos |
 | Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
 
 ## Etapa 2 implementada
@@ -91,6 +101,13 @@
 - `PATCH /api/v1/inventory/:id`
 - `DELETE /api/v1/inventory/:id`
 - `GET /api/v1/inventory/:id/tickets`
+- `GET /api/v1/support-members`
+- `GET /api/v1/dashboard`
+- `GET /api/v1/reports/activity`
+- `POST /api/v1/support-members`
+- `GET /api/v1/support-members/:id`
+- `PATCH /api/v1/support-members/:id`
+- `DELETE /api/v1/support-members/:id`
 - `GET /api/v1/categories`
 - `POST /api/v1/categories`
 - `PATCH /api/v1/categories/:id`
@@ -111,7 +128,7 @@
 - La cookie temporal de OAuth se elimina antes de procesar el callback, de modo que el navegador no la conserva para una reutilización normal. No se añadió Redis ni otra persistencia de challenges porque esta etapa permite explícitamente una cookie HTTP-only temporal.
 - La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
 - En el corte de Etapa 3 OpenAPI aún no se implementaba; quedó implementado y validado en las etapas posteriores.
-- Inventario, miembros de soporte, dashboard, reportes, SMTP y worker de notificaciones siguen fuera de las etapas completadas.
+- SMTP y worker de notificaciones siguen fuera de las etapas completadas.
 - Categorías y subcategorías se ordenan por `name ASC, id ASC`; sugerencias por `title ASC, id ASC`. El listado usa una lectura anidada del repositorio Prisma para evitar N+1.
 - `includeInactive=true` está disponible únicamente para ADMIN. Las bajas son lógicas e idempotentes; desactivar categoría no desactiva sus subcategorías.
 - `SupportSuggestion` no recibió seed: no había contenido técnico autorizado para inventar. El endpoint devuelve una lista vacía cuando no hay filas activas.
@@ -135,7 +152,7 @@
 - `POST assign-self` serializa solicitudes con `SELECT ... FOR UPDATE`; asignaciones y eventos se guardan de forma atómica.
 - Los cierres COMPLETED/CANCELLED preservan el asignado, liberan `duplicateKey`, guardan timestamps y hacen terminal al ticket. La cancelación requiere nota.
 - Idempotencia persistente y multi-instancia: clave única por actor/scope/key, SHA-256 del payload y replay por 24 horas; no se agregó worker de limpieza.
-- `pnpm test` con `DATABASE_URL_TEST` configurada después de Etapa 7: 5 archivos y 159 pruebas aprobadas; 58 pruebas funcionales usaron PostgreSQL real, además de 3 guards de base.
+- `pnpm test` con `DATABASE_URL_TEST` configurada después de Etapa 9: 6 archivos y 188 pruebas aprobadas; 77 pruebas funcionales usaron PostgreSQL real, además de 3 guards de base.
 - `pnpm build`: correcto (`tsc`).
 - `pnpm exec prisma validate`: correcto.
 - OpenAPI parseado y validado mediante la suite existente.
@@ -151,7 +168,9 @@
 - No existe secreto JWT predeterminado ni CORS con origen `*`.
 - Los tokens de Google no se persisten; el ID token se verifica y se descarta.
 - Los stacks se registran internamente para errores inesperados y no se serializan al cliente.
+- La Etapa 10 agrega la migración aditiva `20261004212700_add_ticket_status_completed_at_index`, aplicada a `support_system_test` y `support_system`. En `support_system` solo se creó el índice; no hubo reset, truncate ni limpieza de datos. El reporte usa cuatro consultas agregadas SQL parametrizadas, respeta `APP_TIMEZONE` y conserva el JSON congelado del contrato.
+- Validación de Etapa 10: 7 archivos y 195 pruebas aprobadas; 81 funcionales y 3 guards usaron la suite PostgreSQL real. `SwaggerParser.validate` está incluido en las pruebas de OpenAPI.
 
 ## Próxima etapa
 
-Inventory list/create/detail/update/soft delete/ticket history quedaron implementados en la Etapa 7. Dashboard, miembros de soporte, reportes y worker de notificaciones siguen pendientes. No se implementaron DELETE de ActivityLog, emails ni recordatorios.
+Dashboard por rol quedó implementado en la Etapa 9 en `GET /api/v1/dashboard`, sin migración nueva. USER ve contadores y tickets propios; SUPPORT y SUB_MANAGER ven tickets de sus áreas y completados según `APP_TIMEZONE`; ADMIN ve métricas globales y carga de todos los técnicos activos. Los contadores usan `count`, la carga usa dos `groupBy` y las listas están limitadas mediante `take`; no hay N+1 por técnico ni caché. Reports API quedó implementada en Etapa 10 con agregaciones PostgreSQL y el índice aditivo de completados. El worker de notificaciones sigue pendiente.

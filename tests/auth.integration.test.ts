@@ -25,6 +25,9 @@ import {
     FakeTicketRepository,
     FakeActivityLogRepository,
     FakeInventoryRepository,
+    FakeSupportMemberRepository,
+    FakeDashboardRepository,
+    FakeReportRepository,
     FakeUserRepository,
     makeCategory,
     makeSubcategory,
@@ -56,6 +59,9 @@ function createContext(input: {
         tickets: new FakeTicketRepository(),
         activityLogs: new FakeActivityLogRepository(),
         inventory: new FakeInventoryRepository(),
+        supportMembers: new FakeSupportMemberRepository(),
+        dashboard: new FakeDashboardRepository(),
+        reports: new FakeReportRepository(),
         google,
         checkDatabase: input.checkDatabase ?? (async () => undefined),
     });
@@ -199,6 +205,9 @@ describe("OAuth flow", () => {
             tickets: new FakeTicketRepository(),
             activityLogs: new FakeActivityLogRepository(),
             inventory: new FakeInventoryRepository(),
+            supportMembers: new FakeSupportMemberRepository(),
+            dashboard: new FakeDashboardRepository(),
+            reports: new FakeReportRepository(),
             google: new GoogleOAuthProvider(testConfig),
             checkDatabase: async () => undefined,
         });
@@ -925,6 +934,25 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.body.paths["/api/v1/activity-log/{id}/history"].get).toBeDefined();
         expect(response.body.paths["/api/v1/activity-log/{id}"].delete).toBeUndefined();
         expect(response.body.paths["/api/v1/inventory"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/support-members"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/support-members"].post).toBeDefined();
+        expect(response.body.paths["/api/v1/support-members/{id}"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/support-members/{id}"].patch).toBeDefined();
+        expect(response.body.paths["/api/v1/support-members/{id}"].delete).toBeDefined();
+        expect(response.body.paths["/api/v1/dashboard"].get.responses[200].content["application/json"].schema.oneOf).toHaveLength(3);
+        const report = response.body.paths["/api/v1/reports/activity"].get;
+        expect(report["x-required-roles"]).toEqual(["ADMIN"]);
+        expect(report.parameters.map((parameter: { name: string }) => parameter.name)).toEqual([
+            "from", "to", "supportArea", "categoryId", "technicianId",
+        ]);
+        for (const code of [200, 401, 403, 422, 500]) expect(report.responses[code]).toBeDefined();
+        expect(response.body.components.schemas.ActivityReportResponse).toBeDefined();
+        expect(response.body.components.schemas.ActivityReportDaily).toBeDefined();
+        for (const schema of ["DashboardUserStats", "DashboardSupportStats", "DashboardAdminStats", "TechnicianWorkloadItem"])
+            expect(response.body.components.schemas[schema]).toBeDefined();
+        for (const schema of ["SupportMember", "SupportMemberListItem", "CreateSupportMemberRequest", "PatchSupportMemberRequest"]) {
+            expect(response.body.components.schemas[schema]).toBeDefined();
+        }
         expect(response.body.paths["/api/v1/inventory"].post).toBeDefined();
         expect(response.body.paths["/api/v1/inventory/{id}"].get).toBeDefined();
         expect(response.body.paths["/api/v1/inventory/{id}"].patch).toBeDefined();

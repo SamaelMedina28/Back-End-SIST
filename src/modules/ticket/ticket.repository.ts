@@ -4,7 +4,7 @@ import type { AuthenticatedUser } from "../../types/auth.js";
 import { MAX_ACTIVE_TICKETS } from "../category/category.service.js";
 import type { TicketCreateInput, TicketMutationSnapshot, TicketMutationTransaction, TicketQuery, TicketRecord, TicketRepository } from "./ticket.types.js";
 
-const include = {
+const ticketListInclude = {
     category: { select: { id: true, code: true, name: true, supportArea: true } },
     subcategory: { select: { id: true, code: true, name: true } },
     assignee: { select: { id: true, fullName: true } },
@@ -64,7 +64,7 @@ export class PrismaTicketRepository implements TicketRepository {
                         coordinationApprovalReference: input.software?.coordinationApprovalReference ?? null,
                         duplicateKey,
                     },
-                    include,
+                    include: ticketListInclude,
                 });
                 await tx.ticketEvent.create({ data: {
                     ticketId: ticket.id, actorId: user.id, type: "CREATED", fromStatus: null,
@@ -85,7 +85,7 @@ export class PrismaTicketRepository implements TicketRepository {
         const filter = where as Prisma.TicketWhereInput;
         const [records, total] = await this.prisma.$transaction([
             this.prisma.ticket.findMany({
-                where: filter, include,
+                where: filter, include: ticketListInclude,
                 orderBy: [{ [query.sort]: query.order }, { id: "asc" }],
                 skip: (query.page - 1) * query.pageSize, take: query.pageSize,
             }),
@@ -95,7 +95,7 @@ export class PrismaTicketRepository implements TicketRepository {
     }
 
     async findById(id: string): Promise<TicketRecord | null> {
-        return await this.prisma.ticket.findUnique({ where: { id }, include }) as TicketRecord | null;
+        return await this.prisma.ticket.findUnique({ where: { id }, include: ticketListInclude }) as TicketRecord | null;
     }
 
     events(ticketId: string) {
@@ -114,6 +114,12 @@ export class PrismaTicketRepository implements TicketRepository {
                 findUser: async (id: string) => tx.user.findUnique({
                     where: { id }, select: { id: true, fullName: true, role: true, supportAreas: true, isActive: true },
                 }),
+                findUserForAssignment: async (id: string) => {
+                    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR UPDATE`;
+                    return tx.user.findUnique({
+                        where: { id }, select: { id: true, fullName: true, role: true, supportAreas: true, isActive: true },
+                    });
+                },
                 updateTicket: async (data: Parameters<TicketMutationTransaction["updateTicket"]>[0]) => {
                     const result = await tx.ticket.update({ where: { id: ticketId }, data, include: mutationInclude });
                     return result as unknown as TicketMutationSnapshot;

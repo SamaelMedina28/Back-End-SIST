@@ -427,3 +427,82 @@ const { data: tickets, meta } = envelope;
 ```
 
 El historial admite `status`, `from` y `to` además de paginación. `from/to` filtran la fecha de creación del ticket. `reporter.fullName` es un snapshot del ticket y no cambia cuando se actualiza el usuario. El detalle directo y el historial siguen disponibles después de desactivar el artículo; los tickets previos conservan su relación. Un ticket nuevo que intente usar un artículo inactivo sigue recibiendo `409 INVENTORY_ITEM_INACTIVE`.
+
+## Gestión de miembros de soporte (ADMIN)
+
+La pantalla administrativa usa las cinco rutas `/api/v1/support-members` con `credentials: "include"`. Solo `ADMIN` puede acceder. `GET` devuelve `{ success, data, meta }` paginado (`page=1`, `pageSize=20`, máximo 100), activo por defecto y ordenado por `fullName ASC, id ASC`. Filtros: `search`, `role=SUPPORT|SUB_MANAGER`, `supportArea` y `active=true|false`.
+
+```ts
+const { data: candidates, meta } = await api(
+  "/support-members?supportArea=HARDWARE&active=true&page=1&pageSize=20",
+);
+// Mostrar candidates en el selector de asignación; conservar meta para más páginas.
+```
+
+Este filtro ofrece candidatos compatibles, pero `PUT /tickets/:id/assignee` vuelve a validar rol, actividad y área: maneja `409 ASSIGNEE_INACTIVE` y `409 ASSIGNEE_AREA_MISMATCH` si cambiaron mientras estaba abierta la pantalla. La lista incluye `googleLinked`, no `googleSubject`.
+
+Para preaprovisionar, envía `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas` y `skills`:
+
+```ts
+const created = await api("/support-members", {
+  method: "POST",
+  body: JSON.stringify({
+    fullName: "Ana Soporte",
+    email: "ana@uabc.edu.mx",
+    institutionalId: "EMP-A42",
+    communityType: "ADMINISTRATIVE",
+    role: "SUPPORT",
+    supportAreas: ["HARDWARE"],
+    skills: ["Proyectores"],
+  }),
+});
+```
+
+La creación responde `201`; `googleLinked=false` y `lastLoginAt=null`. No se envía invitación. La persona inicia sesión después con Google usando exactamente ese correo institucional; OAuth encuentra el User por email, vincula el `sub` y conserva rol, áreas y habilidades. Si el correo no pertenece a los dominios permitidos, maneja `403 EMAIL_DOMAIN_NOT_ALLOWED`. Si el email o el identificador ya existe, maneja `409 EMAIL_ALREADY_REGISTERED` o `409 INSTITUTIONAL_ID_ALREADY_REGISTERED`. Para mostrar detalles, consulta `GET /support-members/:id`, que también funciona si está inactivo.
+
+```ts
+await api(`/support-members/${memberId}`, {
+  method: "PATCH",
+  body: JSON.stringify({ role: "SUB_MANAGER", supportAreas: ["HARDWARE", "NETWORKS"] }),
+});
+await api(`/support-members/${memberId}`, { method: "DELETE" }); // 204, sin JSON
+```
+
+PATCH solo acepta `fullName`, `role`, `supportAreas`, `skills`, `isActive`; `isActive: true` reactiva sin crear otra cuenta. El miembro activo requiere al menos un área. DELETE baja lógicamente y puede repetirse; si hay tickets `OPEN`, `IN_REVIEW` o `IN_PROGRESS` asignados, PATCH de baja y DELETE devuelven `409 SUPPORT_MEMBER_HAS_ACTIVE_TICKETS`. Solicita reasignación/desasignación antes de reintentar. La baja conserva historial e identidad Google, pero invalida la sesión para endpoints protegidos y bloquea nuevos accesos OAuth (`403 USER_DISABLED`).
+
+## Reporte de actividad para ADMIN
+
+Con sesión ADMIN, construye el query con fechas locales `YYYY-MM-DD` y conserva esos valores en la UI: la respuesta congelada no repite `period` ni `filters`. Todos los filtros son opcionales y combinables; `technicianId` refiere al asignado actual/final, no al creador del ticket.
+
+```ts
+const params = new URLSearchParams({ from: "2026-09-01", to: "2026-09-30" });
+if (supportArea) params.set("supportArea", supportArea);
+if (categoryId) params.set("categoryId", categoryId);
+if (technicianId) params.set("technicianId", technicianId);
+const report = await api<{
+  summary: { ticketsCreated: number; ticketsCompleted: number; pending: number; averageResolutionMinutes: number };
+  byCategory: Array<{ categoryId: string; category: string; count: number }>;
+  byTechnician: Array<{ technicianId: string; name: string; completed: number; active: number }>;
+  daily: Array<{ date: string; created: number; completed: number }>;
+}>(`/reports/activity?${params}`);
+```
+
+`daily` está ordenado y contiene todos los días del rango, incluidos los que tienen cero; usa `date` como etiqueta de gráfica sin convertirla a un instante UTC del navegador. Creaciones y resoluciones son series distintas: un ticket puede terminar en el periodo aunque se haya creado antes. `pending` refleja el estado **actual** de los creados en el rango. El promedio es cero si no hubo resoluciones. `byTechnician` puede incluir técnicos hoy inactivos. Maneja `401` redirigiendo al acceso, `403` ocultando la pantalla a no administradores y `422 VALIDATION_ERROR` mostrando errores de fecha/filtros. El frontend dibuja las gráficas; el backend solo entrega JSON.
+
+Para D16, usa `daily` en líneas/barras, `byCategory` en gráfica por categorías y `byTechnician` en tabla o gráfica de productividad/carga. Los nombres de categorías y técnicos son actuales, no snapshots históricos. No hay exportación en esta etapa.
+
+## Inicio / dashboard por rol (D02, D07 y D13)
+
+Consulta siempre la misma ruta autenticada, sin enviar un rol en query:
+
+```ts
+const user = await api<{ role: "USER" | "SUPPORT" | "SUB_MANAGER" | "ADMIN" }>("/auth/me");
+const dashboard = await api("/dashboard");
+if (user.role === "USER") renderUserDashboard(dashboard);
+else if (user.role === "SUPPORT" || user.role === "SUB_MANAGER") renderSupportDashboard(dashboard);
+else renderAdminDashboard(dashboard);
+```
+
+El backend consulta el rol actual desde la sesión. `USER` recibe `stats: { active, inProgress, completed }` de sus reportes y `recentTickets` (máximo cinco). `SUPPORT` y `SUB_MANAGER` reciben `stats: { unassigned, mine, highPriority, completedToday }` y `priorityTickets` (máximo diez), siempre limitados a sus áreas; `mine` son activos asignados a sí mismos. Ambas listas usan la forma de los elementos de `GET /tickets`. `ADMIN` recibe `stats: { activeTickets, unassigned, activeTechnicians, inventoryItems }` globales y `technicianWorkload`, que incluye técnicos activos aunque tengan carga cero. `activeTechnicians` no cuenta usuarios ordinarios ni ADMIN; `inventoryItems` excluye inventario inactivo.
+
+`completedToday` corresponde al día institucional configurado en `APP_TIMEZONE` (por defecto `America/Tijuana`), no a la fecha UTC del navegador. El frontend puede refrescar `GET /dashboard` después de acciones relevantes; no necesita endpoints separados, polling especial ni caché adicional. Sin sesión, maneja `401 AUTHENTICATION_REQUIRED` y dirige al acceso.

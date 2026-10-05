@@ -9,6 +9,9 @@ import { PrismaCatalogRepository } from "./modules/category/category.repository.
 import { PrismaTicketRepository } from "./modules/ticket/ticket.repository.js";
 import { PrismaActivityLogRepository } from "./modules/activity-log/activity-log.repository.js";
 import { PrismaInventoryRepository } from "./modules/inventory/inventory.repository.js";
+import { PrismaSupportMemberRepository } from "./modules/support-member/support-member.repository.js";
+import { PrismaDashboardRepository } from "./modules/dashboard/dashboard.repository.js";
+import { PrismaReportRepository } from "./modules/report/report.repository.js";
 
 const config = loadConfig();
 const prisma = createPrismaClient(config.databaseUrl);
@@ -17,6 +20,9 @@ const catalog = new PrismaCatalogRepository(prisma);
 const tickets = new PrismaTicketRepository(prisma);
 const activityLogs = new PrismaActivityLogRepository(prisma);
 const inventory = new PrismaInventoryRepository(prisma);
+const supportMembers = new PrismaSupportMemberRepository(prisma);
+const dashboard = new PrismaDashboardRepository(prisma);
+const reports = new PrismaReportRepository(prisma);
 const google = new GoogleOAuthProvider(config);
 
 const app = createApp({
@@ -26,6 +32,9 @@ const app = createApp({
     tickets,
     activityLogs,
     inventory,
+    supportMembers,
+    dashboard,
+    reports,
     google,
     checkDatabase: async () => {
         await prisma.$queryRaw`SELECT 1`;

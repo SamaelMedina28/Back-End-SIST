@@ -31,6 +31,28 @@ import {
 import type { TicketRepository } from "../../src/modules/ticket/ticket.types.js";
 import type { ActivityLogRepository } from "../../src/modules/activity-log/activity-log.types.js";
 import type { InventoryRepository } from "../../src/modules/inventory/inventory.types.js";
+import type { SupportMemberRepository } from "../../src/modules/support-member/support-member.types.js";
+import type { DashboardRepository } from "../../src/modules/dashboard/dashboard.types.js";
+import type { ReportRepository } from "../../src/modules/report/report.types.js";
+
+export class FakeReportRepository implements ReportRepository {
+    async activity(): Promise<never> { throw new Error("FakeReportRepository: method was not configured for this test"); }
+}
+
+export class FakeDashboardRepository implements DashboardRepository {
+    private unused(): never { throw new Error("FakeDashboardRepository: method was not configured for this test"); }
+    async userDashboard(): Promise<never> { return this.unused(); }
+    async supportDashboard(): Promise<never> { return this.unused(); }
+    async adminDashboard(): Promise<never> { return this.unused(); }
+}
+
+export class FakeSupportMemberRepository implements SupportMemberRepository {
+    private unused(): never { throw new Error("FakeSupportMemberRepository: method was not configured for this test"); }
+    async create(): Promise<never> { return this.unused(); }
+    async list(): Promise<never> { return this.unused(); }
+    async findById(): Promise<null> { return this.unused(); }
+    async withLockedMember<T>(): Promise<T> { return this.unused(); }
+}
 
 export class FakeTicketRepository implements TicketRepository {
     private unused(): never { throw new Error("FakeTicketRepository: ticket method was not configured for this test"); }
@@ -71,6 +93,7 @@ export const testConfig: AppConfig = {
     googleClientSecret: "test-client-secret",
     googleRedirectUri: "http://localhost:3000/api/v1/auth/google/callback",
     allowedEmailDomains: ["uabc.edu.mx"],
+    appTimezone: "America/Tijuana",
 };
 
 export function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {

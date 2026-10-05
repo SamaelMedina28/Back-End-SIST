@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Application } from "express";
 import { CommunityType, Role, SupportArea, TicketPriority, TicketStatus, type PrismaClient } from "../generated/prisma/client.js";
 import { createPrismaClient } from "../lib/prisma.js";
@@ -11,7 +11,11 @@ import { PrismaCatalogRepository } from "../src/modules/category/category.reposi
 import { PrismaTicketRepository } from "../src/modules/ticket/ticket.repository.js";
 import { PrismaActivityLogRepository } from "../src/modules/activity-log/activity-log.repository.js";
 import { PrismaInventoryRepository } from "../src/modules/inventory/inventory.repository.js";
+import { PrismaSupportMemberRepository } from "../src/modules/support-member/support-member.repository.js";
+import { PrismaDashboardRepository } from "../src/modules/dashboard/dashboard.repository.js";
+import { PrismaReportRepository } from "../src/modules/report/report.repository.js";
 import { FakeGoogleProvider, testConfig } from "./helpers/fakes.js";
+import { todayRange } from "../src/modules/dashboard/dashboard.time.js";
 
 const databaseUrl = process.env.DATABASE_URL_TEST;
 const baseBody = (categoryId: string, subcategoryId: string | null = null, room = "603") => ({
@@ -47,6 +51,8 @@ describe("Protección de base de integración", () => {
 describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
     let prisma: PrismaClient;
     let app: Application;
+    let google: FakeGoogleProvider;
+    let dashboardNow = new Date();
     let safe = false;
     let hardwareId: string;
     let hardwareSubId: string;
@@ -127,6 +133,33 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         return request(app).post("/api/v1/inventory").set("Cookie", cookie(user)).send(body);
     }
 
+    async function dashboardTicket(reporter: Awaited<ReturnType<typeof createTestUser>>, input: {
+        categoryId?: string; assigneeId?: string | null; priority?: TicketPriority; status?: TicketStatus;
+        completedAt?: Date | null; createdAt?: Date; title?: string;
+    } = {}) {
+        const [{ number }] = await prisma.$queryRaw<Array<{ number: bigint }>>`SELECT nextval(pg_get_serial_sequence('"Ticket"', 'number')) AS number`;
+        const numeric = Number(number);
+        return prisma.ticket.create({ data: {
+            number: numeric, code: `TK-${String(numeric).padStart(6, "0")}`,
+            title: input.title ?? "Ticket del dashboard", description: "Incidencia de prueba para agregados.",
+            reporterId: reporter.id, reporterNameSnapshot: reporter.fullName,
+            reporterEmailSnapshot: reporter.email, reporterPhoneSnapshot: reporter.phone,
+            reporterCommunityTypeSnapshot: reporter.communityType,
+            categoryId: input.categoryId ?? hardwareId, priority: input.priority ?? TicketPriority.MEDIUM,
+            status: input.status ?? TicketStatus.OPEN, building: "Edificio 6", room: "603",
+            assigneeId: input.assigneeId ?? null, completedAt: input.completedAt ?? null,
+            ...(input.createdAt ? { createdAt: input.createdAt } : {}),
+        } });
+    }
+
+    function dashboardGet(user: Awaited<ReturnType<typeof createTestUser>>) {
+        return request(app).get("/api/v1/dashboard").set("Cookie", cookie(user));
+    }
+
+    function reportGet(user: Awaited<ReturnType<typeof createTestUser>>, query: Record<string, string> = {}) {
+        return request(app).get("/api/v1/reports/activity").set("Cookie", cookie(user)).query(query);
+    }
+
     beforeAll(async () => {
         const configuredName = assertTestDatabaseName(databaseUrl as string);
         prisma = createPrismaClient(databaseUrl as string);
@@ -171,16 +204,21 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             code: "TEST_CORE_NULL_PRIORITY", name: "Sin prioridad", supportArea: SupportArea.HARDWARE,
             defaultPriority: null,
         } })).id;
+        google = new FakeGoogleProvider();
         app = createApp({
             config: { ...testConfig, databaseUrl: databaseUrl as string },
             users: new PrismaUserRepository(prisma), catalog, tickets: new PrismaTicketRepository(prisma),
             activityLogs: new PrismaActivityLogRepository(prisma),
             inventory: new PrismaInventoryRepository(prisma),
-            google: new FakeGoogleProvider(), checkDatabase: async () => { await prisma.$queryRaw`SELECT 1`; },
+            supportMembers: new PrismaSupportMemberRepository(prisma),
+            dashboard: new PrismaDashboardRepository(prisma),
+            reports: new PrismaReportRepository(prisma),
+            dashboardClock: () => dashboardNow,
+            google, checkDatabase: async () => { await prisma.$queryRaw`SELECT 1`; },
         });
     });
 
-    beforeEach(async () => { await cleanTicketsAndUsers(); });
+    beforeEach(async () => { dashboardNow = new Date(); await cleanTicketsAndUsers(); });
 
     afterAll(async () => {
         if (prisma) {
@@ -191,6 +229,147 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             }
             await prisma.$disconnect();
         }
+    });
+
+    it("restringe el reporte a ADMIN y valida fechas y filtros antes de consultar", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        for (const role of [Role.USER, Role.SUPPORT, Role.SUB_MANAGER]) {
+            const user = await createTestUser({ role });
+            const response = await reportGet(user, { from: "2026-09-01", to: "2026-09-03" });
+            expect(response.status).toBe(403);
+            expect(response.body.error.code).toBe("FORBIDDEN");
+        }
+        expect((await request(app).get("/api/v1/reports/activity")).status).toBe(401);
+        for (const query of [
+            {}, { from: "2026-02-31", to: "2026-03-01" }, { from: "01/09/2026", to: "2026-09-01" },
+            { from: "2026-09-03", to: "2026-09-01" },
+            { from: "2026-09-01", to: "2026-09-03", supportArea: "INVALID" },
+            { from: "2026-09-01", to: "2026-09-03", categoryId: "not-uuid" },
+            { from: "2026-09-01", to: "2026-09-03", technicianId: "not-uuid" },
+        ]) {
+            const response = await reportGet(admin, query);
+            expect(response.status).toBe(422);
+            expect(response.body.error.code).toBe("VALIDATION_ERROR");
+        }
+    });
+
+    it("agrega cohortes distintas, técnicos inactivos, filtros y días locales vacíos", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const technician = await createTestUser({ role: Role.SUPPORT, fullName: "Ana Técnica" });
+        const inactive = await createTestUser({ role: Role.SUB_MANAGER, fullName: "Beto Inactivo" });
+        await prisma.user.update({ where: { id: inactive.id }, data: { isActive: false } });
+        const period = { from: "2026-10-04", to: "2026-10-06" };
+        await dashboardTicket(reporter, { categoryId: hardwareId, assigneeId: technician.id,
+            createdAt: new Date("2026-10-05T05:30:00Z"), status: TicketStatus.IN_PROGRESS });
+        await dashboardTicket(reporter, { categoryId: hardwareId,
+            createdAt: new Date("2026-10-04T10:00:00Z"), status: TicketStatus.OPEN });
+        await dashboardTicket(reporter, { categoryId: hardwareId, assigneeId: inactive.id,
+            createdAt: new Date("2026-10-03T17:00:00Z"), completedAt: new Date("2026-10-05T08:30:00Z"),
+            status: TicketStatus.COMPLETED });
+        await dashboardTicket(reporter, { categoryId: otherCategoryId,
+            createdAt: new Date("2026-10-05T09:00:00Z"), status: TicketStatus.CANCELLED });
+        const response = await reportGet(admin, period);
+        expect(response.status).toBe(200);
+        expect(Object.keys(response.body.data).sort()).toEqual(["byCategory", "byTechnician", "daily", "summary"]);
+        expect(response.body.data.summary).toEqual({ ticketsCreated: 3, ticketsCompleted: 1, pending: 2,
+            averageResolutionMinutes: 2370 });
+        expect(response.body.data.byCategory).toEqual([
+            { categoryId: hardwareId, category: "Proyectores", count: 2 },
+            { categoryId: otherCategoryId, category: "Redes", count: 1 },
+        ]);
+        expect(response.body.data.byTechnician).toEqual([
+            { technicianId: inactive.id, name: "Beto Inactivo", completed: 1, active: 0 },
+            { technicianId: technician.id, name: "Ana Técnica", completed: 0, active: 1 },
+        ]);
+        expect(response.body.data.daily).toEqual([
+            { date: "2026-10-04", created: 2, completed: 0 },
+            { date: "2026-10-05", created: 1, completed: 1 },
+            { date: "2026-10-06", created: 0, completed: 0 },
+        ]);
+        const filtered = await reportGet(admin, { ...period, supportArea: "HARDWARE", technicianId: technician.id });
+        expect(filtered.status).toBe(200);
+        expect(filtered.body.data.summary).toEqual({ ticketsCreated: 1, ticketsCompleted: 0, pending: 1,
+            averageResolutionMinutes: 0 });
+        expect(filtered.body.data.byCategory).toEqual([{ categoryId: hardwareId, category: "Proyectores", count: 1 }]);
+        expect(filtered.body.data.daily[0]).toEqual({ date: "2026-10-04", created: 1, completed: 0 });
+        const none = await reportGet(admin, { ...period, categoryId: randomUUID() });
+        expect(none.body.data.summary).toEqual({ ticketsCreated: 0, ticketsCompleted: 0, pending: 0,
+            averageResolutionMinutes: 0 });
+        expect(none.body.data.daily).toHaveLength(3);
+    });
+
+    it("combina todos los filtros con AND, estados activos y promedio de dos resoluciones", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const techA = await createTestUser({ role: Role.SUPPORT, fullName: "Ana" });
+        const techB = await createTestUser({ role: Role.SUPPORT, fullName: "Beto" });
+        const createdAt = new Date("2026-09-01T17:00:00Z");
+        await dashboardTicket(reporter, { categoryId: hardwareId, assigneeId: techA.id,
+            createdAt, completedAt: new Date("2026-09-01T18:00:00Z"), status: TicketStatus.COMPLETED });
+        await dashboardTicket(reporter, { categoryId: hardwareId, assigneeId: techA.id,
+            createdAt, completedAt: new Date("2026-09-01T19:00:00Z"), status: TicketStatus.COMPLETED });
+        await dashboardTicket(reporter, { categoryId: softwareId, assigneeId: techB.id,
+            createdAt, status: TicketStatus.IN_REVIEW });
+        await dashboardTicket(reporter, { categoryId: softwareId, assigneeId: techB.id,
+            createdAt, status: TicketStatus.IN_PROGRESS });
+        await dashboardTicket(reporter, { categoryId: otherCategoryId, createdAt,
+            status: TicketStatus.OPEN });
+        await dashboardTicket(reporter, { categoryId: hardwareId,
+            createdAt: new Date("2026-08-31T17:00:00Z"), status: TicketStatus.OPEN });
+        const period = { from: "2026-09-01", to: "2026-09-01" };
+        const all = await reportGet(admin, period);
+        expect(all.status).toBe(200);
+        expect(all.body.data.summary).toEqual({ ticketsCreated: 5, ticketsCompleted: 2, pending: 3,
+            averageResolutionMinutes: 90 });
+        expect(all.body.data.byCategory.map((item: { category: string; count: number }) => item)).toEqual([
+            { categoryId: hardwareId, category: "Proyectores", count: 2 },
+            { categoryId: softwareId, category: "Software", count: 2 },
+            { categoryId: otherCategoryId, category: "Redes", count: 1 },
+        ]);
+        expect(all.body.data.byTechnician).toEqual([
+            { technicianId: techA.id, name: "Ana", completed: 2, active: 0 },
+            { technicianId: techB.id, name: "Beto", completed: 0, active: 2 },
+        ]);
+        const hardware = await reportGet(admin, { ...period, supportArea: "HARDWARE", categoryId: hardwareId });
+        expect(hardware.body.data.summary.ticketsCreated).toBe(2);
+        const software = await reportGet(admin, { ...period, categoryId: softwareId, technicianId: techB.id });
+        expect(software.body.data.summary).toEqual({ ticketsCreated: 2, ticketsCompleted: 0, pending: 2,
+            averageResolutionMinutes: 0 });
+        expect(software.body.data.byTechnician).toEqual([
+            { technicianId: techB.id, name: "Beto", completed: 0, active: 2 },
+        ]);
+        const allThree = await reportGet(admin, { ...period, supportArea: "HARDWARE",
+            categoryId: softwareId, technicianId: techB.id });
+        expect(allThree.body.data.summary.ticketsCreated).toBe(0);
+        expect(allThree.body.data.byCategory).toEqual([]);
+        expect(allThree.body.data.daily).toEqual([{ date: "2026-09-01", created: 0, completed: 0 }]);
+    });
+
+    it("agrega cientos de tickets en PostgreSQL sin devolver filas individuales", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const numbers = await prisma.$queryRaw<Array<{ number: bigint }>>`
+            SELECT nextval(pg_get_serial_sequence('"Ticket"', 'number')) AS number FROM generate_series(1, 250)
+        `;
+        await prisma.ticket.createMany({ data: numbers.map(({ number }) => {
+            const numeric = Number(number);
+            return {
+                number: numeric, code: `TK-${String(numeric).padStart(6, "0")}`,
+                title: "Volumen reporte", description: "Fixture de agregación.",
+                reporterId: reporter.id, reporterNameSnapshot: reporter.fullName,
+                reporterEmailSnapshot: reporter.email, reporterPhoneSnapshot: reporter.phone,
+                reporterCommunityTypeSnapshot: reporter.communityType,
+                categoryId: hardwareId, priority: TicketPriority.MEDIUM, status: TicketStatus.OPEN,
+                building: "Edificio 6", room: "603", createdAt: new Date("2026-09-01T17:00:00Z"),
+            };
+        }) });
+        const response = await reportGet(admin, { from: "2026-09-01", to: "2026-09-01" });
+        expect(response.status).toBe(200);
+        expect(response.body.data.summary).toEqual({ ticketsCreated: 250, ticketsCompleted: 0,
+            pending: 250, averageResolutionMinutes: 0 });
+        expect(response.body.data.byCategory).toEqual([{ categoryId: hardwareId, category: "Proyectores", count: 250 }]);
+        expect(response.body.data.daily).toEqual([{ date: "2026-09-01", created: 250, completed: 0 }]);
     });
 
     it("crea OPEN con prioridad calculada, snapshots, código secuencial y evento atómico", async () => {
@@ -997,5 +1176,396 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect((await request(app).get(`/api/v1/inventory/${randomUUID()}/tickets`).set("Cookie", cookie(admin))).body.error.code).toBe("INVENTORY_ITEM_NOT_FOUND");
         expect((await request(app).get(`/api/v1/inventory/${itemId}/tickets?pageSize=101`).set("Cookie", cookie(admin))).status).toBe(422);
         expect(one.status).toBe(201);
+    });
+
+    function memberBody(suffix = randomUUID(), overrides: Record<string, unknown> = {}) {
+        return { fullName: "  Ana Soporte  ", email: `Member-${suffix}@UABC.EDU.MX`,
+            institutionalId: `EMP-${suffix}`, communityType: CommunityType.ADMINISTRATIVE,
+            role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE], skills: ["  Proyectores  "], ...overrides };
+    }
+
+    async function memberPost(admin: Awaited<ReturnType<typeof createTestUser>>, body: Record<string, unknown>) {
+        return request(app).post("/api/v1/support-members").set("Cookie", cookie(admin)).send(body);
+    }
+
+    it("preaprovisiona soporte sin vínculo Google y con respuesta explícita", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const body = memberBody();
+        const response = await memberPost(admin, body);
+        expect(response.status).toBe(201);
+        expect(response.body.data).toMatchObject({ fullName: "Ana Soporte", email: (body.email as string).toLowerCase(),
+            institutionalId: body.institutionalId, role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE],
+            skills: ["Proyectores"], isActive: true, googleLinked: false, lastLoginAt: null });
+        expect(response.body.data).not.toHaveProperty("googleSubject");
+        expect(response.body.data).not.toHaveProperty("phone");
+        const row = await prisma.user.findUniqueOrThrow({ where: { id: response.body.data.id } });
+        expect(row).toMatchObject({ googleSubject: null, isActive: true, lastLoginAt: null });
+    });
+
+    it("restringe las cinco rutas a ADMIN y valida campos, dominio, rol y UUID", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const member = await memberPost(admin, memberBody());
+        const id = member.body.data.id as string;
+        const unauthorized = [
+            request(app).get("/api/v1/support-members"),
+            request(app).post("/api/v1/support-members").send(memberBody()),
+            request(app).get(`/api/v1/support-members/${id}`),
+            request(app).patch(`/api/v1/support-members/${id}`).send({ fullName: "Otro" }),
+            request(app).delete(`/api/v1/support-members/${id}`),
+        ];
+        for (const call of unauthorized) expect((await call).status).toBe(401);
+        for (const role of [Role.USER, Role.SUPPORT, Role.SUB_MANAGER]) {
+            const actor = await createTestUser({ role, supportAreas: [SupportArea.HARDWARE] });
+            const forbidden = [
+                request(app).get("/api/v1/support-members"),
+                request(app).post("/api/v1/support-members").send(memberBody()),
+                request(app).get(`/api/v1/support-members/${id}`),
+                request(app).patch(`/api/v1/support-members/${id}`).send({ fullName: "Otro" }),
+                request(app).delete(`/api/v1/support-members/${id}`),
+            ];
+            for (const call of forbidden) expect((await call.set("Cookie", cookie(actor))).status).toBe(403);
+        }
+        for (const field of ["id", "googleSubject", "isActive", "phone", "avatarUrl", "lastLoginAt", "createdAt", "password"]) {
+            expect((await memberPost(admin, { ...memberBody(), [field]: "forbidden" })).status).toBe(422);
+        }
+        for (const invalid of [
+            memberBody(randomUUID(), { role: Role.USER }), memberBody(randomUUID(), { role: Role.ADMIN }),
+            memberBody(randomUUID(), { supportAreas: [] }), memberBody(randomUUID(), { supportAreas: [SupportArea.HARDWARE, SupportArea.HARDWARE] }),
+            memberBody(randomUUID(), { skills: ["  "] }), memberBody(randomUUID(), { skills: ["Redes", "redes"] }),
+            memberBody(randomUUID(), { institutionalId: "  " }), memberBody(randomUUID(), { fullName: "  " }),
+        ]) expect((await memberPost(admin, invalid)).status).toBe(422);
+        const domain = await memberPost(admin, memberBody(randomUUID(), { email: "member@example.com" }));
+        expect(domain.status).toBe(403);
+        expect(domain.body.error.code).toBe("EMAIL_DOMAIN_NOT_ALLOWED");
+        expect((await request(app).get("/api/v1/support-members/not-a-uuid").set("Cookie", cookie(admin))).status).toBe(422);
+        expect((await request(app).get(`/api/v1/support-members/${admin.id}`).set("Cookie", cookie(admin))).body.error.code).toBe("SUPPORT_MEMBER_NOT_FOUND");
+    });
+
+    it("resuelve unicidad concurrente por email e institutionalId con PostgreSQL", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const sameEmail = memberBody();
+        const emailResults = await Promise.all([
+            memberPost(admin, sameEmail), memberPost(admin, { ...memberBody(), email: sameEmail.email }),
+        ]);
+        expect(emailResults.map((result) => result.status).sort()).toEqual([201, 409]);
+        expect(emailResults.find((result) => result.status === 409)?.body.error.code).toBe("EMAIL_ALREADY_REGISTERED");
+        const sameId = memberBody();
+        const idResults = await Promise.all([
+            memberPost(admin, sameId), memberPost(admin, { ...memberBody(), institutionalId: sameId.institutionalId }),
+        ]);
+        expect(idResults.map((result) => result.status).sort()).toEqual([201, 409]);
+        expect(idResults.find((result) => result.status === 409)?.body.error.code).toBe("INSTITUTIONAL_ID_ALREADY_REGISTERED");
+        expect(await prisma.user.count({ where: { role: Role.SUPPORT } })).toBe(2);
+    });
+
+    it("lista solo soporte con filtros, orden, paginación y selector compatible", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        await createTestUser({ role: Role.USER, fullName: "Ana Usuario" });
+        const ana = await memberPost(admin, memberBody(randomUUID(), { fullName: "Ana Técnica", supportAreas: [SupportArea.HARDWARE] }));
+        await memberPost(admin, memberBody(randomUUID(), { fullName: "Zoe Redes", role: Role.SUB_MANAGER, supportAreas: [SupportArea.NETWORKS] }));
+        const inactive = await memberPost(admin, memberBody(randomUUID(), { fullName: "Bea Inactiva" }));
+        await request(app).delete(`/api/v1/support-members/${inactive.body.data.id}`).set("Cookie", cookie(admin)).expect(204);
+        const list = await request(app).get("/api/v1/support-members?page=1&pageSize=1").set("Cookie", cookie(admin)).expect(200);
+        expect(list.body.meta).toMatchObject({ page: 1, pageSize: 1, total: 2, totalPages: 2 });
+        expect(list.body.data[0].id).toBe(ana.body.data.id);
+        const selector = await request(app).get("/api/v1/support-members?supportArea=HARDWARE&active=true").set("Cookie", cookie(admin)).expect(200);
+        expect(selector.body.data.map((row: { id: string }) => row.id)).toEqual([ana.body.data.id]);
+        const search = await request(app).get("/api/v1/support-members?search=T%C3%89CNICA").set("Cookie", cookie(admin)).expect(200);
+        expect(search.body.data).toHaveLength(1);
+        expect((await request(app).get("/api/v1/support-members?active=false").set("Cookie", cookie(admin))).body.data).toHaveLength(1);
+        expect((await request(app).get("/api/v1/support-members?role=USER").set("Cookie", cookie(admin))).status).toBe(422);
+        expect((await request(app).get("/api/v1/support-members?pageSize=101").set("Cookie", cookie(admin))).status).toBe(422);
+        expect((await request(app).get("/api/v1/support-members?role=SUB_MANAGER").set("Cookie", cookie(admin))).body.data).toHaveLength(1);
+        expect((await request(app).get(`/api/v1/support-members?search=${encodeURIComponent(ana.body.data.institutionalId)}`).set("Cookie", cookie(admin))).body.data).toHaveLength(1);
+    });
+
+    it("PATCH parcial cambia rol/áreas/habilidades, preserva identidad y no-op; DELETE idempotente", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const created = await memberPost(admin, memberBody());
+        const id = created.body.data.id as string;
+        const url = `/api/v1/support-members/${id}`;
+        const original = await prisma.user.findUniqueOrThrow({ where: { id } });
+        const updated = await request(app).patch(url).set("Cookie", cookie(admin)).send({
+            fullName: "  Técnica Principal ", role: Role.SUB_MANAGER,
+            supportAreas: [SupportArea.SOFTWARE], skills: ["  Diagnóstico  "],
+        }).expect(200);
+        expect(updated.body.data).toMatchObject({ fullName: "Técnica Principal", role: Role.SUB_MANAGER,
+            supportAreas: [SupportArea.SOFTWARE], skills: ["Diagnóstico"], email: original.email });
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({})).body.data.updatedAt).toBe(updated.body.data.updatedAt);
+        for (const field of ["email", "institutionalId", "communityType", "googleSubject", "phone", "createdAt"]) {
+            expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ [field]: "changed" })).status).toBe(422);
+        }
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ supportAreas: [] })).status).toBe(422);
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ role: Role.ADMIN })).status).toBe(422);
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ skills: ["  "] })).status).toBe(422);
+        await request(app).delete(url).set("Cookie", cookie(admin)).expect(204);
+        await request(app).delete(url).set("Cookie", cookie(admin)).expect(204);
+        expect((await request(app).get(url).set("Cookie", cookie(admin))).body.data.isActive).toBe(false);
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ supportAreas: [] })).status).toBe(200);
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ isActive: true })).status).toBe(422);
+        await request(app).patch(url).set("Cookie", cookie(admin)).send({ supportAreas: [SupportArea.SOFTWARE] }).expect(200);
+        expect((await request(app).patch(url).set("Cookie", cookie(admin)).send({ isActive: true })).body.data.isActive).toBe(true);
+        expect((await prisma.user.findUniqueOrThrow({ where: { id } })).googleSubject).toBeNull();
+    });
+
+    it.each([TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS])("impide desactivar técnicos con tickets %s asignados y conserva tickets cerrados", async (status) => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const member = await memberPost(admin, memberBody());
+        const id = member.body.data.id as string;
+        const ticket = await createTestTicket(reporter);
+        await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin)).send({ assigneeId: id }).expect(200);
+        if (status !== TicketStatus.OPEN) await prisma.ticket.update({ where: { id: ticket.id }, data: { status } });
+        for (const response of [
+            await request(app).delete(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)),
+            await request(app).patch(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).send({ isActive: false }),
+        ]) {
+            expect(response.status).toBe(409);
+            expect(response.body.error.code).toBe("SUPPORT_MEMBER_HAS_ACTIVE_TICKETS");
+        }
+        expect((await prisma.user.findUniqueOrThrow({ where: { id } })).isActive).toBe(true);
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.COMPLETED, completedAt: new Date() } });
+        await request(app).delete(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).expect(204);
+        expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assigneeId).toBe(id);
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(1);
+    });
+
+    it("CANCELLED tampoco bloquea la baja y conserva el vínculo histórico", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const member = await memberPost(admin, memberBody());
+        const id = member.body.data.id as string;
+        const ticket = await createTestTicket(reporter);
+        await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin)).send({ assigneeId: id }).expect(200);
+        await prisma.ticket.update({ where: { id: ticket.id }, data: {
+            status: TicketStatus.CANCELLED, cancelledAt: new Date(), cancellationReason: "Prueba", duplicateKey: null,
+        } });
+        await request(app).delete(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).expect(204);
+        expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assigneeId).toBe(id);
+    });
+
+    it("serializa DELETE concurrente con asignación administrativa", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const member = await memberPost(admin, memberBody());
+        const id = member.body.data.id as string;
+        const ticket = await createTestTicket(reporter);
+        const [removed, assigned] = await Promise.all([
+            request(app).delete(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)),
+            request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin)).send({ assigneeId: id }),
+        ]);
+        const row = await prisma.user.findUniqueOrThrow({ where: { id } });
+        const ticketRow = await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+        expect([[204, 409], [409, 200]]).toContainEqual([removed.status, assigned.status]);
+        expect(!(row.isActive === false && ticketRow.assigneeId === id)).toBe(true);
+        if (removed.status === 409) expect(removed.body.error.code).toBe("SUPPORT_MEMBER_HAS_ACTIVE_TICKETS");
+        if (assigned.status === 409) expect(assigned.body.error.code).toBe("ASSIGNEE_INACTIVE");
+    });
+
+    it("serializa PATCH de baja concurrente con autoasignación", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const member = await memberPost(admin, memberBody());
+        const id = member.body.data.id as string;
+        const support = await prisma.user.findUniqueOrThrow({ where: { id } });
+        const ticket = await createTestTicket(reporter);
+        const [deactivated, assigned] = await Promise.all([
+            request(app).patch(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).send({ isActive: false }),
+            request(app).post(`/api/v1/tickets/${ticket.id}/assign-self`).set("Cookie", cookie(support)).send({}),
+        ]);
+        const row = await prisma.user.findUniqueOrThrow({ where: { id } });
+        const ticketRow = await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+        expect(!(row.isActive === false && ticketRow.assigneeId === id)).toBe(true);
+        expect([200, 409]).toContain(deactivated.status);
+        expect([200, 401, 403, 409]).toContain(assigned.status);
+    });
+
+    it("OAuth real sobre repositorio Prisma vincula preaprovisionado sin degradar rol ni reactivar inactivos", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const created = await memberPost(admin, memberBody(randomUUID(), { role: Role.SUB_MANAGER, skills: ["Redes"] }));
+        const id = created.body.data.id as string;
+        const before = await prisma.user.findUniqueOrThrow({ where: { id } });
+        google.identity = { googleSubject: `google-${randomUUID()}`, email: before.email, emailVerified: true,
+            fullName: "Google Name", avatarUrl: null };
+        const agent = request.agent(app);
+        const first = await agent.get("/api/v1/auth/google").expect(302);
+        const state = new URL(first.headers.location as string).searchParams.get("state");
+        const callback = await agent.get("/api/v1/auth/google/callback").query({ code: "mock", state }).expect(302);
+        expect(callback.headers.location).toBe(`${testConfig.frontendUrl}/auth/success`);
+        const linked = await prisma.user.findUniqueOrThrow({ where: { id } });
+        expect(linked).toMatchObject({ googleSubject: google.identity.googleSubject, email: before.email,
+            institutionalId: before.institutionalId, role: Role.SUB_MANAGER,
+            supportAreas: [SupportArea.HARDWARE], skills: ["Redes"] });
+        expect((await request(app).get(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin))).body.data.googleLinked).toBe(true);
+        const again = await agent.get("/api/v1/auth/google").expect(302);
+        await agent.get("/api/v1/auth/google/callback")
+            .query({ code: "mock", state: new URL(again.headers.location as string).searchParams.get("state") }).expect(302);
+        await request(app).delete(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).expect(204);
+        const second = await request.agent(app);
+        const start = await second.get("/api/v1/auth/google").expect(302);
+        const disabled = await second.get("/api/v1/auth/google/callback").query({ code: "mock", state: new URL(start.headers.location as string).searchParams.get("state") }).expect(403);
+        expect(disabled.body.error.code).toBe("USER_DISABLED");
+        expect((await agent.get("/api/v1/auth/me")).status).toBe(403);
+        expect((await prisma.user.findUniqueOrThrow({ where: { id } })).googleSubject).toBe(linked.googleSubject);
+        await request(app).patch(`/api/v1/support-members/${id}`).set("Cookie", cookie(admin)).send({ isActive: true }).expect(200);
+        expect((await prisma.user.findUniqueOrThrow({ where: { id } })).googleSubject).toBe(linked.googleSubject);
+    });
+
+    it("OAuth con otro Google sub para email preexistente responde conflicto sin reemplazar vínculo", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const created = await memberPost(admin, memberBody());
+        const id = created.body.data.id as string;
+        await prisma.user.update({ where: { id }, data: { googleSubject: "original-google-sub" } });
+        google.identity = { googleSubject: "different-google-sub", email: created.body.data.email,
+            emailVerified: true, fullName: "Otro", avatarUrl: null };
+        const agent = request.agent(app);
+        const start = await agent.get("/api/v1/auth/google").expect(302);
+        const response = await agent.get("/api/v1/auth/google/callback")
+            .query({ code: "mock", state: new URL(start.headers.location as string).searchParams.get("state") }).expect(409);
+        expect(response.body.error.code).toBe("GOOGLE_ACCOUNT_CONFLICT");
+        expect((await prisma.user.findUniqueOrThrow({ where: { id } })).googleSubject).toBe("original-google-sub");
+        expect((await agent.get("/api/v1/auth/me")).status).toBe(401);
+    });
+
+    it("dashboard USER cuenta únicamente sus estados y devuelve cinco tickets recientes en orden", async () => {
+        const user = await createTestUser();
+        const other = await createTestUser();
+        const empty = await createTestUser();
+        const statuses = [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS,
+            TicketStatus.COMPLETED, TicketStatus.COMPLETED, TicketStatus.CANCELLED, TicketStatus.CANCELLED];
+        const tickets = [];
+        for (const [index, status] of statuses.entries()) tickets.push(await dashboardTicket(user, {
+            status, createdAt: new Date(Date.UTC(2026, 9, 1 + index, 12)),
+            ...(status === TicketStatus.COMPLETED ? { completedAt: new Date(Date.UTC(2026, 9, 1 + index, 14)) } : {}),
+        }));
+        await dashboardTicket(other, { status: TicketStatus.IN_PROGRESS });
+        const response = await dashboardGet(user).expect(200);
+        expect(response.body.data.stats).toEqual({ active: 3, inProgress: 1, completed: 2 });
+        expect(response.body.data.recentTickets.map((ticket: { id: string }) => ticket.id))
+            .toEqual(tickets.slice(-5).reverse().map((ticket) => ticket.id));
+        expect(response.body.data.recentTickets[0]).toMatchObject({
+            category: { id: hardwareId }, location: { building: "Edificio 6", room: "603" },
+        });
+        expect(response.body.data.recentTickets[0]).not.toHaveProperty("reporterEmailSnapshot");
+        expect(response.body.data).not.toHaveProperty("technicianWorkload");
+        expect((await dashboardGet(empty).expect(200)).body.data).toEqual({
+            stats: { active: 0, inProgress: 0, completed: 0 }, recentTickets: [],
+        });
+        const spoofed = await request(app).get("/api/v1/dashboard?role=ADMIN").set("Cookie", cookie(user)).expect(200);
+        expect(spoofed.body.data.stats).toEqual({ active: 3, inProgress: 1, completed: 2 });
+        expect((await request(app).get("/api/v1/dashboard")).body.error.code).toBe("AUTHENTICATION_REQUIRED");
+    });
+
+    it("dashboard SUPPORT limita métricas y prioridades a sus áreas, activos y fecha local", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const today = todayRange(dashboardNow, testConfig.appTimezone);
+        const oldHigh = await dashboardTicket(reporter, { priority: TicketPriority.HIGH,
+            createdAt: new Date("2026-01-01T12:00:00.000Z") });
+        const newHigh = await dashboardTicket(reporter, { priority: TicketPriority.HIGH,
+            assigneeId: support.id, status: TicketStatus.IN_PROGRESS,
+            createdAt: new Date("2026-01-02T12:00:00.000Z") });
+        const medium = await dashboardTicket(reporter, { priority: TicketPriority.MEDIUM });
+        const low = await dashboardTicket(reporter, { priority: TicketPriority.LOW });
+        await dashboardTicket(reporter, { categoryId: softwareId, priority: TicketPriority.HIGH });
+        await dashboardTicket(reporter, { priority: TicketPriority.HIGH, status: TicketStatus.COMPLETED,
+            assigneeId: support.id, completedAt: new Date(today.start.getTime() + 60_000) });
+        await dashboardTicket(reporter, { status: TicketStatus.COMPLETED, assigneeId: support.id,
+            completedAt: new Date(today.start.getTime() - 60_000) });
+        await dashboardTicket(reporter, { status: TicketStatus.COMPLETED, categoryId: softwareId,
+            assigneeId: support.id, completedAt: new Date(today.start.getTime() + 60_000) });
+        await dashboardTicket(reporter, { status: TicketStatus.CANCELLED, priority: TicketPriority.HIGH });
+        const response = await dashboardGet(support).expect(200);
+        expect(response.body.data.stats).toEqual({ unassigned: 3, mine: 1, highPriority: 2, completedToday: 1 });
+        expect(response.body.data.priorityTickets.map((ticket: { id: string }) => ticket.id))
+            .toEqual([oldHigh.id, newHigh.id, medium.id, low.id]);
+        expect(response.body.data.priorityTickets.every((ticket: { category: { id: string } }) => ticket.category.id === hardwareId)).toBe(true);
+        expect(response.body.data).not.toHaveProperty("recentTickets");
+    });
+
+    it("dashboard SUB_MANAGER usa la misma forma, respeta múltiples áreas y limita prioridades a diez", async () => {
+        const reporter = await createTestUser();
+        const manager = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE, SupportArea.NETWORKS] });
+        const highs = [];
+        for (let index = 0; index < 12; index++) highs.push(await dashboardTicket(reporter, {
+            categoryId: index % 2 === 0 ? hardwareId : otherCategoryId,
+            priority: TicketPriority.HIGH, createdAt: new Date(Date.UTC(2026, 0, 1 + index)),
+        }));
+        await dashboardTicket(reporter, { categoryId: softwareId, priority: TicketPriority.HIGH });
+        const response = await dashboardGet(manager).expect(200);
+        expect(response.body.data.stats).toEqual({ unassigned: 12, mine: 0, highPriority: 12, completedToday: 0 });
+        expect(response.body.data.priorityTickets).toHaveLength(10);
+        expect(response.body.data.priorityTickets.map((ticket: { id: string }) => ticket.id))
+            .toEqual(highs.slice(0, 10).map((ticket) => ticket.id));
+    });
+
+    it("dashboard ADMIN agrega globalmente, incluye técnicos sin carga y ordena workload", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const ana = await createTestUser({ role: Role.SUPPORT, fullName: "Ana", supportAreas: [SupportArea.HARDWARE] });
+        const zoe = await createTestUser({ role: Role.SUB_MANAGER, fullName: "Zoe", supportAreas: [SupportArea.NETWORKS] });
+        const zero = await createTestUser({ role: Role.SUPPORT, fullName: "Luis", supportAreas: [SupportArea.SOFTWARE] });
+        const inactive = await createTestUser({ role: Role.SUPPORT, fullName: "Inactivo", supportAreas: [SupportArea.HARDWARE] });
+        await prisma.user.update({ where: { id: inactive.id }, data: { isActive: false } });
+        await dashboardTicket(reporter, { assigneeId: ana.id, status: TicketStatus.IN_PROGRESS });
+        await dashboardTicket(reporter, { assigneeId: ana.id, status: TicketStatus.OPEN });
+        await dashboardTicket(reporter, { assigneeId: zoe.id, categoryId: otherCategoryId });
+        await dashboardTicket(reporter, { categoryId: softwareId });
+        await dashboardTicket(reporter, { assigneeId: inactive.id });
+        const today = todayRange(dashboardNow, testConfig.appTimezone);
+        await dashboardTicket(reporter, { assigneeId: ana.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date(today.start.getTime() + 60_000) });
+        await dashboardTicket(reporter, { assigneeId: ana.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date(today.start.getTime() - 60_000) });
+        await dashboardTicket(reporter, { status: TicketStatus.CANCELLED });
+        await prisma.inventoryItem.createMany({ data: [
+            { type: "CONTROL", model: "Activo", isActive: true },
+            { type: "CONTROL", model: "Inactivo", isActive: false },
+        ] });
+        const response = await dashboardGet(admin).expect(200);
+        expect(response.body.data.stats).toEqual({ activeTickets: 5, unassigned: 1, activeTechnicians: 3, inventoryItems: 1 });
+        expect(response.body.data.technicianWorkload).toEqual([
+            { userId: ana.id, name: "Ana", supportAreas: [SupportArea.HARDWARE], activeTickets: 2, completedToday: 1 },
+            { userId: zoe.id, name: "Zoe", supportAreas: [SupportArea.NETWORKS], activeTickets: 1, completedToday: 0 },
+            { userId: zero.id, name: "Luis", supportAreas: [SupportArea.SOFTWARE], activeTickets: 0, completedToday: 0 },
+        ]);
+        expect(response.body.data.technicianWorkload[0]).not.toHaveProperty("email");
+    });
+
+    it("completedToday distingue el día de Tijuana del día UTC en PostgreSQL", async () => {
+        dashboardNow = new Date("2026-10-05T06:30:00.000Z"); // En Tijuana aún es 4 de octubre.
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const admin = await createTestUser({ role: Role.ADMIN });
+        await dashboardTicket(reporter, { assigneeId: support.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date("2026-10-04T06:59:59.000Z") }); // Ayer local.
+        await dashboardTicket(reporter, { assigneeId: support.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date("2026-10-04T07:00:00.000Z") }); // Inicio de hoy local.
+        await dashboardTicket(reporter, { assigneeId: support.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date("2026-10-05T06:00:00.000Z") }); // Hoy local, mañana UTC.
+        await dashboardTicket(reporter, { assigneeId: support.id, status: TicketStatus.COMPLETED,
+            completedAt: new Date("2026-10-05T07:00:00.000Z") }); // Mañana local.
+        expect((await dashboardGet(support).expect(200)).body.data.stats.completedToday).toBe(2);
+        const workload = (await dashboardGet(admin).expect(200)).body.data.technicianWorkload;
+        expect(workload[0]).toMatchObject({ userId: support.id, completedToday: 2 });
+    });
+
+    it("workload usa dos groupBy para muchos técnicos y decenas de tickets, sin N+1", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const reporter = await createTestUser();
+        const technicians = [];
+        for (let index = 0; index < 20; index++) technicians.push(await createTestUser({
+            role: index % 2 ? Role.SUPPORT : Role.SUB_MANAGER,
+            fullName: `Técnico ${String(index).padStart(2, "0")}`, supportAreas: [SupportArea.HARDWARE],
+        }));
+        for (let index = 0; index < 60; index++) await dashboardTicket(reporter, {
+            assigneeId: technicians[index % technicians.length]?.id,
+        });
+        const groupBy = vi.spyOn(prisma.ticket, "groupBy");
+        const response = await dashboardGet(admin).expect(200);
+        expect(response.body.data.stats).toMatchObject({ activeTickets: 60, activeTechnicians: 20 });
+        expect(response.body.data.technicianWorkload).toHaveLength(20);
+        expect(response.body.data.technicianWorkload.every((item: { activeTickets: number }) => item.activeTickets === 3)).toBe(true);
+        expect(groupBy).toHaveBeenCalledTimes(2);
     });
 });

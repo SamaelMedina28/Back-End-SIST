@@ -285,6 +285,34 @@ await api(`/catalog/support-suggestions?categoryId=${categoryId}&subcategoryId=$
 
 La gestión de categorías/subcategorías requiere `ADMIN`; los usuarios ordinarios solo consultan el catálogo activo.
 
+## Reporte de actividad (ADMIN)
+
+### `GET /api/v1/reports/activity`
+
+Requiere sesión ADMIN. `from` y `to` son fechas locales reales `YYYY-MM-DD`, obligatorias, inclusivas y con `from <= to`; `supportArea` (`HARDWARE`, `SOFTWARE`, `NETWORKS`, `ADMINISTRATIVE`), `categoryId` y `technicianId` son filtros opcionales combinados con AND. `categoryId` y `technicianId` son UUID. Una fecha, enum o UUID inválida responde `422 VALIDATION_ERROR`; falta de sesión, `401`; los demás roles, `403`. UUID válidos sin actividad generan agregados en cero.
+
+Ejemplo: `GET /api/v1/reports/activity?from=2026-09-01&to=2026-09-30&supportArea=HARDWARE`.
+
+La respuesta mantiene la forma del contrato: `{ "success": true, "data": { "summary": { ... }, "byCategory": [...], "byTechnician": [...], "daily": [...] } }`. No incluye `period` ni `filters`; el cliente conserva los valores enviados. `daily` devuelve todos los días locales del rango, incluso sin actividad, con `created: 0` y `completed: 0`.
+
+`ticketsCreated` cuenta todos los creados en el rango por `createdAt`; `ticketsCompleted` cuenta los actualmente `COMPLETED` por `completedAt`, incluso si nacieron antes. `pending` cuenta los creados en el rango que **ahora** siguen `OPEN`, `IN_REVIEW` o `IN_PROGRESS`, no el estado histórico al final del periodo. `averageResolutionMinutes` promedia `completedAt - createdAt` sobre la cohorte completada, redondea al entero más cercano y vale cero sin resoluciones. Son cohortes distintas, no cifras aditivas.
+
+`byCategory` agrupa los creados, omite categorías sin actividad y ordena por `count DESC`, nombre e ID. `byTechnician` muestra SUPPORT/SUB_MANAGER con `completed` por fecha de resolución o `active` por fecha de creación y estado actual; incluye inactivos con actividad, excluye tickets sin asignar y ordena por completados, activos, nombre e ID. `technicianId` siempre filtra `Ticket.assigneeId` actual/final. Los filtros también afectan `daily`. El backend usa los días de `APP_TIMEZONE` (por defecto `America/Tijuana`) y límites UTC semiabiertos, incluidos cambios estacionales.
+
+`byCategory.category` y `byTechnician.name` son los nombres **actuales** de Category y User; Ticket no conserva snapshots de esos nombres para este reporte. Pueden diferir de los nombres que tenían cuando ocurrió la actividad.
+
+## Dashboard por rol
+
+### `GET /api/v1/dashboard`
+
+Requiere cookie de sesión; no recibe body ni necesita query. El backend toma el rol actual del usuario autenticado, no del cliente. Sin sesión responde `401 AUTHENTICATION_REQUIRED`. Solo existe esta ruta de dashboard, disponible para `USER`, `SUPPORT`, `SUB_MANAGER` y `ADMIN`. La respuesta es siempre `{ "success": true, "data": { ... } }`, pero `data` cambia según el rol:
+
+- `USER`: `stats.active` cuenta tickets propios `OPEN`, `IN_REVIEW` o `IN_PROGRESS`; `inProgress` cuenta solo propios `IN_PROGRESS`; `completed` cuenta propios `COMPLETED`, nunca `CANCELLED`. `recentTickets` son los últimos cinco tickets propios (`createdAt DESC`, `id ASC`) con la misma forma de `TicketListItem` del listado.
+- `SUPPORT` y `SUB_MANAGER`: solo consideran tickets de las áreas en `supportAreas`. `unassigned` cuenta activos sin asignado; `mine`, activos asignados al usuario; `highPriority`, activos visibles de prioridad `HIGH`; `completedToday`, completados asignados al usuario durante el día local de `APP_TIMEZONE`. `priorityTickets` contiene como máximo diez activos visibles, ordenados `HIGH`, `MEDIUM`, `LOW` y, dentro de cada prioridad, `createdAt ASC`, `id ASC`; usa `TicketListItem`.
+- `ADMIN`: `activeTickets` cuenta todos los activos; `unassigned`, todos los activos sin asignado; `activeTechnicians`, usuarios activos con rol `SUPPORT`/`SUB_MANAGER`; `inventoryItems`, artículos activos. `technicianWorkload` incluye también técnicos activos sin tickets y expone solo `userId`, `name`, `supportAreas`, `activeTickets` asignados y `completedToday` asignados. Orden: carga activa descendente, nombre ascendente, id ascendente.
+
+`completedToday` usa un rango UTC `[inicio del día local, inicio del día local siguiente)` calculado con la zona IANA configurada. No usa el día UTC ni un offset fijo; respeta cambios estacionales. El dashboard es informativo y de solo lectura; dos contadores podrían reflejar instantes cercanos pero distintos durante escrituras concurrentes.
+
 ## Bitácora y auditoría
 
 Los estados de una actividad son `IN_PROGRESS` y `COMPLETED`. El ticket relacionado debe estar `IN_PROGRESS` o `COMPLETED`. Los snapshots de ticket y reportero los genera el backend desde el ticket; las actualizaciones posteriores del ticket no los sincronizan.
@@ -429,3 +457,43 @@ const tickets = await api(`/inventory/${inventoryId}/tickets?page=1&pageSize=20`
 ```
 
 Todas las rutas documentan `401` por sesión faltante, `403` por rol y `422 VALIDATION_ERROR` por entradas inválidas, además de los errores específicos indicados arriba.
+
+## Miembros de soporte
+
+Las cinco rutas `/api/v1/support-members` requieren sesión de `ADMIN`; `USER`, `SUPPORT` y `SUB_MANAGER` reciben `403`. Se reutiliza `User` con roles `SUPPORT`/`SUB_MANAGER`; no hay contraseña ni invitación por correo. Un miembro se crea antes del primer acceso Google (`googleSubject=null`), y OAuth lo vincula por email sin cambiar rol, comunidad, áreas, habilidades ni identificador institucional. Las respuestas nunca incluyen `googleSubject`, teléfono ni avatar; `googleLinked` indica si ya existe vínculo.
+
+### `GET /api/v1/support-members`
+
+Filtros opcionales: `search` (case-insensitive en nombre, email e identificador), `role` (`SUPPORT` o `SUB_MANAGER`), `supportArea` (`HARDWARE`, `SOFTWARE`, `NETWORKS`, `ADMINISTRATIVE`) y `active` (`true` por defecto, o `false`). Paginación estándar: `page=1`, `pageSize=20`, máximo 100; orden `fullName ASC, id ASC`. Un filtro inválido responde `422 VALIDATION_ERROR`. Para poblar el selector administrativo de asignación usa `?supportArea=HARDWARE&active=true`; la asignación vuelve a comprobar en servidor rol, actividad y área.
+
+Respuesta `{ success: true, data: [...], meta: { page, pageSize, total, totalPages } }`. Cada elemento contiene `id`, `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas`, `skills`, `isActive`, `googleLinked` y `lastLoginAt` (nullable).
+
+### `POST /api/v1/support-members`
+
+Body estricto: exactamente los campos `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas` y `skills`. `fullName` e `institutionalId` se recortan y no pueden estar vacíos; el identificador admite letras y números. `email` se normaliza a minúsculas y debe pertenecer a `ALLOWED_EMAIL_DOMAINS` (si no, `403 EMAIL_DOMAIN_NOT_ALLOWED`). El rol solo puede ser `SUPPORT` o `SUB_MANAGER`; áreas no vacías y sin duplicados; habilidades pueden ser `[]`, se recortan y no aceptan vacías ni duplicados sin distinguir mayúsculas. `USER`/`ADMIN` o campos adicionales responden `422`. La respuesta `201` usa el detalle e incluye `createdAt`/`updatedAt`.
+
+```json
+{
+  "fullName": "Ana Soporte",
+  "email": "ana@uabc.edu.mx",
+  "institutionalId": "EMP-A42",
+  "communityType": "ADMINISTRATIVE",
+  "role": "SUPPORT",
+  "supportAreas": ["HARDWARE"],
+  "skills": ["Proyectores"]
+}
+```
+
+La unicidad de email e institutionalId se resuelve finalmente con los constraints PostgreSQL, también bajo POST concurrentes. Los conflictos devuelven `409 EMAIL_ALREADY_REGISTERED` o `409 INSTITUTIONAL_ID_ALREADY_REGISTERED`. No se envía email ni se escribe NotificationOutbox.
+
+### `GET /api/v1/support-members/:id`
+
+Devuelve el detalle también cuando `isActive=false`. UUID inválido: `422`; id inexistente o que corresponde a `USER`/`ADMIN`: `404 SUPPORT_MEMBER_NOT_FOUND`.
+
+### `PATCH /api/v1/support-members/:id`
+
+Admite parcialmente solo `fullName`, `role`, `supportAreas`, `skills`, `isActive`. Permite `SUPPORT` ↔ `SUB_MANAGER`, baja y reactivación. Un miembro activo debe conservar al menos un área; un PATCH vacío o idéntico devuelve `200` sin modificar `updatedAt`. No se puede alterar email, institutionalId, communityType o vínculo Google. La desactivación con tickets asignados `OPEN`, `IN_REVIEW` o `IN_PROGRESS` devuelve `409 SUPPORT_MEMBER_HAS_ACTIVE_TICKETS`.
+
+### `DELETE /api/v1/support-members/:id`
+
+Baja lógica (`isActive=false`) idempotente: `204` sin body incluso cuando ya estaba inactivo. Conserva User, vínculo Google, tickets, eventos y bitácoras. Si tiene tickets activos asignados, devuelve `409 SUPPORT_MEMBER_HAS_ACTIVE_TICKETS`; reasígnalos o desasígnalos antes. La asignación y la baja bloquean la misma fila de User en PostgreSQL para no dejar un ticket recién asignado a un miembro inactivo. Tras la baja, su sesión anterior y nuevos intentos OAuth reciben `403 USER_DISABLED`. No hay hard delete.

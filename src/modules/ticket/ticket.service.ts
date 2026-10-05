@@ -4,7 +4,8 @@ import { AppError } from "../../common/errors/app-error.js";
 import { resolveEffectivePriority } from "../category/category.service.js";
 import type { CatalogRepository } from "../category/category.types.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
-import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository, TicketMutationSnapshot, MutationActor } from "./ticket.types.js";
+import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository, TicketMutationSnapshot, MutationActor, TicketListSource } from "./ticket.types.js";
+import { supportAreaTicketFilter } from "./ticket.scope.js";
 
 export function normalizeLocation(value: string | null | undefined): string | null {
     return value == null ? null : value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ") || null;
@@ -21,7 +22,7 @@ export function ticketDuplicateKey(input: Pick<TicketCreateInput, "categoryId" |
 const smallCategory = (value: TicketRecord["category"]) => ({ id: value.id, code: value.code, name: value.name });
 const smallSubcategory = (value: TicketRecord["subcategory"]) => value ? ({ id: value.id, code: value.code, name: value.name }) : null;
 const assignee = (value: TicketRecord["assignee"]) => value ? ({ id: value.id, fullName: value.fullName }) : null;
-const location = (value: TicketRecord) => ({ building: value.building, room: value.room });
+const location = (value: Pick<TicketRecord, "building" | "room">) => ({ building: value.building, room: value.room });
 const ACTIVE_STATUSES: TicketStatus[] = [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS];
 const transitions: Record<TicketStatus, TicketStatus[]> = {
     OPEN: [TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS, TicketStatus.CANCELLED],
@@ -79,7 +80,7 @@ export function toCreatedTicket(ticket: TicketRecord) {
     };
 }
 
-export function toTicketListItem(ticket: TicketRecord) {
+export function toTicketListItem(ticket: TicketListSource) {
     return {
         id: ticket.id, code: ticket.code, title: ticket.title,
         category: { id: ticket.category.id, name: ticket.category.name },
@@ -183,7 +184,7 @@ export class TicketService {
         }
         const filters: Record<string, unknown>[] = [];
         if (user.role === Role.USER) filters.push({ reporterId: user.id });
-        else if (user.role !== Role.ADMIN) filters.push({ category: { supportArea: { in: user.supportAreas } } });
+        else if (user.role !== Role.ADMIN) filters.push(supportAreaTicketFilter(user.supportAreas));
         if (query.search) filters.push({ OR: [
             { code: { contains: query.search, mode: "insensitive" } },
             { title: { contains: query.search, mode: "insensitive" } },
@@ -233,7 +234,7 @@ export class TicketService {
             const ticket = tx.ticket;
             if (!ticket) throw new AppError(404, "TICKET_NOT_FOUND", "El ticket no existe.");
             assertActive(ticket);
-            const actor = requireActor(await tx.findUser(user.id));
+            const actor = requireActor(await tx.findUserForAssignment(user.id));
             requireSupport(actor);
             if (!supportAreaIncludes(actor, ticket.category.supportArea)) fail(403, "SUPPORT_AREA_FORBIDDEN", "El ticket está fuera de tus áreas de soporte.");
             if (ticket.assigneeId) fail(409, "TICKET_ALREADY_ASSIGNED", "El ticket ya tiene una persona asignada.");
@@ -251,7 +252,7 @@ export class TicketService {
             const actor = requireActor(await tx.findUser(user.id));
             requireAdmin(actor);
             assertActive(ticket);
-            const target = await tx.findUser(assigneeId);
+            const target = await tx.findUserForAssignment(assigneeId);
             if (!target) throw new AppError(404, "ASSIGNEE_NOT_FOUND", "La persona asignada no existe.");
             if (!target.isActive) fail(409, "ASSIGNEE_INACTIVE", "La persona asignada está inactiva.");
             if (target.role !== Role.SUPPORT && target.role !== Role.SUB_MANAGER) fail(409, "INVALID_ASSIGNEE_ROLE", "La persona debe tener un rol de soporte.");

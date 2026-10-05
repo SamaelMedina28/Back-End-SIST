@@ -58,6 +58,7 @@ export interface NewIdempotencyRecord {
 export interface TicketMutationTransaction {
     ticket: TicketMutationSnapshot | null;
     findUser(id: string): Promise<MutationActor | null>;
+    findUserForAssignment(id: string): Promise<MutationActor | null>;
     updateTicket(data: {
         assigneeId?: string | null; assignedAt?: Date | null; status?: TicketStatus;
         priority?: TicketPriority; duplicateKey?: string | null; completedAt?: Date | null;
@@ -81,6 +82,14 @@ export interface TicketRecord {
     subcategory: { id: string; code: string; name: string } | null;
     assignee: { id: string; fullName: string } | null;
     inventoryItem: { id: string; type: string; model: string | null; assetCode: string | null } | null;
+}
+
+export interface TicketListSource {
+    id: string; code: string; title: string; building: string; room: string | null;
+    priority: TicketPriority; status: TicketStatus; createdAt: Date;
+    category: { id: string; name: string };
+    subcategory: { id: string; name: string } | null;
+    assignee: { id: string; fullName: string } | null;
 }
 
 export interface TicketEventRecord {

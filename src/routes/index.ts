@@ -27,6 +27,18 @@ import type { InventoryRepository } from "../modules/inventory/inventory.types.j
 import { InventoryService } from "../modules/inventory/inventory.service.js";
 import { InventoryController } from "../modules/inventory/inventory.controller.js";
 import { createInventoryRouter } from "../modules/inventory/inventory.routes.js";
+import type { SupportMemberRepository } from "../modules/support-member/support-member.types.js";
+import { SupportMemberService } from "../modules/support-member/support-member.service.js";
+import { SupportMemberController } from "../modules/support-member/support-member.controller.js";
+import { createSupportMemberRouter } from "../modules/support-member/support-member.routes.js";
+import type { DashboardRepository } from "../modules/dashboard/dashboard.types.js";
+import { DashboardService } from "../modules/dashboard/dashboard.service.js";
+import { DashboardController } from "../modules/dashboard/dashboard.controller.js";
+import { createDashboardRouter } from "../modules/dashboard/dashboard.routes.js";
+import type { ReportRepository } from "../modules/report/report.types.js";
+import { ReportService } from "../modules/report/report.service.js";
+import { ReportController } from "../modules/report/report.controller.js";
+import { createReportRouter } from "../modules/report/report.routes.js";
 
 export function createApiRouter(input: {
     config: AppConfig;
@@ -35,6 +47,10 @@ export function createApiRouter(input: {
     tickets: TicketRepository;
     activityLogs: ActivityLogRepository;
     inventory: InventoryRepository;
+    supportMembers: SupportMemberRepository;
+    dashboard: DashboardRepository;
+    reports: ReportRepository;
+    dashboardClock?: () => Date;
     google: GoogleIdentityProvider;
 }): ExpressRouter {
     const router = Router();
@@ -51,6 +67,9 @@ export function createApiRouter(input: {
     const ticketController = new TicketController(new TicketService(input.tickets, input.catalog));
     const activityLogController = new ActivityLogController(new ActivityLogService(input.activityLogs));
     const inventoryController = new InventoryController(new InventoryService(input.inventory));
+    const supportMemberController = new SupportMemberController(new SupportMemberService(input.supportMembers, input.config.allowedEmailDomains));
+    const dashboardController = new DashboardController(new DashboardService(input.dashboard, input.config.appTimezone, input.dashboardClock));
+    const reportController = new ReportController(new ReportService(input.reports, input.config.appTimezone));
 
     router.use("/auth", createAuthRouter({
         controller: authController,
@@ -99,6 +118,15 @@ export function createApiRouter(input: {
         users: input.users,
         sessions,
         config: input.config,
+    }));
+    router.use("/support-members", createSupportMemberRouter({
+        controller: supportMemberController, users: input.users, sessions, config: input.config,
+    }));
+    router.use("/dashboard", createDashboardRouter({
+        controller: dashboardController, users: input.users, sessions, config: input.config,
+    }));
+    router.use("/reports", createReportRouter({
+        controller: reportController, users: input.users, sessions, config: input.config,
     }));
 
     return router;

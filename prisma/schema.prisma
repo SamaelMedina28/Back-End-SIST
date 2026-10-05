@@ -192,6 +192,7 @@ model Ticket {
   @@index([subcategoryId])
   @@index([createdAt])
   @@index([status, priority])
+  @@index([status, completedAt])
   @@index([assigneeId, status])
   @@index([reporterId, status])
   @@index([categoryId, status])
