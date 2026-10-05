@@ -248,13 +248,17 @@ Todas estas rutas requieren sesión. Las mutaciones persisten el cambio y su `Ti
 
 Solo `SUPPORT` y `SUB_MANAGER`. El ticket debe estar activo, sin asignar y dentro de las áreas del actor. La fila del ticket se bloquea en PostgreSQL: ante solicitudes simultáneas solo una gana (`200`); las demás reciben `409 TICKET_ALREADY_ASSIGNED`. Emite `ASSIGNED` con `assignmentType: "SELF"`.
 
+Una asignación exitosa también crea `TICKET_ASSIGNED` en `NotificationOutbox` dentro de la transacción. La respuesta no espera el envío SMTP.
+
 ### `PUT /api/v1/tickets/:id/assignee`
 
 Solo `ADMIN`. Body estricto: `{ "assigneeId": "UUID" }`. El destino debe ser un usuario activo `SUPPORT` o `SUB_MANAGER` cuya área incluya la categoría. Permite reasignar; volver a asignar al mismo usuario es idempotente y no repite el evento. Errores relevantes: `ASSIGNEE_NOT_FOUND`, `ASSIGNEE_INACTIVE`, `INVALID_ASSIGNEE_ROLE`, `ASSIGNEE_AREA_MISMATCH`, `TICKET_NOT_ACTIVE`.
 
+Al cambiar realmente el responsable, la misma transacción persiste `TicketEvent ASSIGNED` y encola `TICKET_ASSIGNED` para el nuevo técnico. El envío asíncrono no forma parte de la petición: `200` confirma asignación y encolado, no entrega del correo. Una reasignación repetida al mismo técnico no duplica evento ni correo.
+
 ### `DELETE /api/v1/tickets/:id/assignee`
 
-Solo `ADMIN`. Retira asignación y emite `UNASSIGNED`; si ya no hay asignado, responde `204` sin evento. Solo aplica a tickets activos.
+Solo `ADMIN`. Retira asignación y emite `UNASSIGNED`; si ya no hay asignado, responde `204` sin evento. Solo aplica a tickets activos. No encola una notificación de asignación.
 
 ### `PATCH /api/v1/tickets/:id/status`
 

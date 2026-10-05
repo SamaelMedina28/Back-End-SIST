@@ -61,6 +61,8 @@ enum NotificationStatus {
   PENDING
   SENT
   FAILED
+  PROCESSING
+  SKIPPED
 }
 
 model User {
@@ -300,6 +302,8 @@ model NotificationOutbox {
   payload        Json
   status         NotificationStatus @default(PENDING)
   attempts       Int                @default(0)
+  lockedAt       DateTime?
+  lockedBy       String?
   availableAt    DateTime           @default(now())
   sentAt         DateTime?
   lastError      String?

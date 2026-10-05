@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Application } from "express";
-import { CommunityType, Role, SupportArea, TicketPriority, TicketStatus, type PrismaClient } from "../generated/prisma/client.js";
+import { CommunityType, NotificationStatus, Role, SupportArea, TicketPriority, TicketStatus, type PrismaClient } from "../generated/prisma/client.js";
 import { createPrismaClient } from "../lib/prisma.js";
 import { createApp } from "../src/app.js";
 import { PrismaUserRepository } from "../src/modules/auth/user.repository.js";
@@ -14,6 +14,10 @@ import { PrismaInventoryRepository } from "../src/modules/inventory/inventory.re
 import { PrismaSupportMemberRepository } from "../src/modules/support-member/support-member.repository.js";
 import { PrismaDashboardRepository } from "../src/modules/dashboard/dashboard.repository.js";
 import { PrismaReportRepository } from "../src/modules/report/report.repository.js";
+import { PrismaNotificationRepository } from "../src/modules/notification/notification.repository.js";
+import { NotificationService } from "../src/modules/notification/notification.service.js";
+import { NOTIFICATION_TYPES } from "../src/modules/notification/notification.constants.js";
+import type { MailMessage, MailTransport, NotificationRuntimeConfig } from "../src/modules/notification/notification.types.js";
 import { FakeGoogleProvider, testConfig } from "./helpers/fakes.js";
 import { todayRange } from "../src/modules/dashboard/dashboard.time.js";
 
@@ -62,6 +66,26 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
     let otherSubId: string;
     let inactiveId: string;
     let nullPriorityId: string;
+
+    class RecordingMailTransport implements MailTransport {
+        readonly messages: MailMessage[] = [];
+        failure: Error | null = null;
+        delayMs = 0;
+        async send(message: MailMessage) {
+            if (this.delayMs) await new Promise((resolve) => setTimeout(resolve, this.delayMs));
+            if (this.failure) throw this.failure;
+            this.messages.push(message);
+        }
+    }
+
+    function notificationService(transport: MailTransport, overrides: Partial<NotificationRuntimeConfig> = {}, clock: () => Date = () => new Date()) {
+        const config: NotificationRuntimeConfig = {
+            enabled: false, intervalMs: 10_000, batchSize: 25, maxAttempts: 5, lockTimeoutMs: 300_000,
+            reminderEnabled: false, reminderIntervalMs: 3_600_000, timeZone: "America/Tijuana",
+            smtpUser: "test-smtp-user", smtpPassword: "test-smtp-password", ...overrides,
+        };
+        return new NotificationService(new PrismaNotificationRepository(prisma), transport, config, clock);
+    }
 
     async function cleanTicketsAndUsers() {
         if (!safe) throw new Error("La base de test no fue verificada.");
@@ -169,6 +193,8 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         safe = true;
         await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_event ON "TicketEvent"`);
         await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_event()`);
+        await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_notification ON "NotificationOutbox"`);
+        await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_notification()`);
         await cleanTicketsAndUsers();
         await prisma.subcategory.deleteMany({ where: { category: { code: { startsWith: "TEST_CORE_" } } } });
         await prisma.category.deleteMany({ where: { code: { startsWith: "TEST_CORE_" } } });
@@ -647,6 +673,12 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(responses.find((response) => response.status === 409)?.body.error.code).toBe("TICKET_ALREADY_ASSIGNED");
         expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(1);
         expect(await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ assigneeId: support.id });
+        const outbox = await prisma.notificationOutbox.findMany({ where: { ticketId: ticket.id } });
+        expect(outbox).toHaveLength(1);
+        expect(outbox[0]).toMatchObject({ type: NOTIFICATION_TYPES.TICKET_ASSIGNED, recipientEmail: support.email,
+            status: NotificationStatus.PENDING, attempts: 0, ticketId: ticket.id,
+            payload: { ticketCode: "TK-000001", ticketTitle: "Proyector sin señal", assigneeName: support.fullName,
+                priority: "HIGH", building: "Edificio 6", room: expect.any(String) } });
     });
 
     it("ADMIN asigna, reasigna y desasigna dentro del área; el mismo asignado no duplica evento", async () => {
@@ -662,9 +694,156 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect((await assign(support.id)).status).toBe(200);
         expect((await assign(otherSupport.id)).status).toBe(200);
         expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(2);
+        expect(await prisma.notificationOutbox.count({ where: { ticketId: ticket.id, type: NOTIFICATION_TYPES.TICKET_ASSIGNED } })).toBe(2);
+        expect((await prisma.notificationOutbox.findMany({ where: { ticketId: ticket.id }, orderBy: { createdAt: "asc" } }))
+            .map((notification) => notification.recipientEmail)).toEqual([support.email, otherSupport.email]);
         expect((await request(app).delete(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin))).status).toBe(204);
         expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "UNASSIGNED" } })).toBe(1);
+        expect(await prisma.notificationOutbox.count({ where: { ticketId: ticket.id } })).toBe(2);
         expect((await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assignedAt).toBeNull();
+    });
+
+    it("revierte asignación y evento si falla la inserción transaccional del outbox", async () => {
+        const reporter = await createTestUser();
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter);
+        await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION test_core_reject_notification() RETURNS trigger AS $$
+            BEGIN RAISE EXCEPTION 'simulated outbox insert failure'; END;
+        $$ LANGUAGE plpgsql`);
+        await prisma.$executeRawUnsafe(`CREATE TRIGGER test_core_reject_notification BEFORE INSERT ON "NotificationOutbox"
+            FOR EACH ROW WHEN (NEW.type = 'TICKET_ASSIGNED') EXECUTE FUNCTION test_core_reject_notification()`);
+        try {
+            const response = await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`)
+                .set("Cookie", cookie(admin)).send({ assigneeId: support.id });
+            expect(response.status).toBe(500);
+            expect(await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ assigneeId: null, assignedAt: null });
+            expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(0);
+            expect(await prisma.notificationOutbox.count({ where: { ticketId: ticket.id } })).toBe(0);
+        } finally {
+            await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS test_core_reject_notification ON "NotificationOutbox"`);
+            await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS test_core_reject_notification()`);
+        }
+    });
+
+    it("mantiene asignación y evento tras fallo SMTP, guarda backoff, y cierra en FAILED al agotar intentos", async () => {
+        const reporter = await createTestUser();
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await createTestTicket(reporter);
+        await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin)).send({ assigneeId: support.id }).expect(200);
+        const fixedNow = new Date("2026-10-05T05:30:00.000Z");
+        const transport = new RecordingMailTransport();
+        transport.failure = new Error("SMTP rejected test-smtp-password recipient@private.test");
+        const service = notificationService(transport, { maxAttempts: 2, batchSize: 5 }, () => fixedNow);
+
+        await service.processNotificationBatch();
+        let notification = await prisma.notificationOutbox.findFirstOrThrow({ where: { ticketId: ticket.id } });
+        expect(notification).toMatchObject({ status: NotificationStatus.PENDING, attempts: 1 });
+        expect(notification.lastError).not.toContain("test-smtp-password");
+        expect(notification.lastError).not.toContain("recipient@private.test");
+        expect(notification.availableAt.getTime()).toBe(fixedNow.getTime() + 60_000);
+        expect(await prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).toMatchObject({ assigneeId: support.id });
+        expect(await prisma.ticketEvent.count({ where: { ticketId: ticket.id, type: "ASSIGNED" } })).toBe(1);
+
+        await prisma.notificationOutbox.update({ where: { id: notification.id }, data: { availableAt: new Date(fixedNow.getTime() - 1) } });
+        await service.processNotificationBatch();
+        notification = await prisma.notificationOutbox.findUniqueOrThrow({ where: { id: notification.id } });
+        expect(notification).toMatchObject({ status: NotificationStatus.FAILED, attempts: 2 });
+        expect(await service.processNotificationBatch()).toBe(0);
+    });
+
+    it("procesa correo exitoso y dos workers reclaman cada outbox una sola vez", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        for (let index = 0; index < 4; index += 1) {
+            const reporter = await createTestUser();
+            const ticket = await createTestTicket(reporter, { room: `WORKER-${index}` });
+            await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin))
+                .send({ assigneeId: support.id }).expect(200);
+        }
+        const fixedNow = new Date();
+        const transport = new RecordingMailTransport();
+        transport.delayMs = 20;
+        const firstWorker = notificationService(transport, { batchSize: 4 }, () => fixedNow);
+        const secondWorker = notificationService(transport, { batchSize: 4 }, () => fixedNow);
+        const processed = await Promise.all([firstWorker.processNotificationBatch(), secondWorker.processNotificationBatch()]);
+        expect(processed.reduce((sum, count) => sum + count, 0)).toBe(4);
+        expect(transport.messages).toHaveLength(4);
+        expect(new Set(transport.messages.map((message) => message.subject)).size).toBe(4);
+        const notifications = await prisma.notificationOutbox.findMany({ orderBy: { createdAt: "asc" } });
+        expect(notifications).toHaveLength(4);
+        expect(notifications.every((item) => item.status === NotificationStatus.SENT && item.attempts === 1 && item.sentAt !== null)).toBe(true);
+    });
+
+    it("respeta batch size y recupera claims abandonados tras el timeout", async () => {
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        for (let index = 0; index < 3; index += 1) {
+            const reporter = await createTestUser();
+            const ticket = await createTestTicket(reporter, { room: `BATCH-${index}` });
+            await request(app).put(`/api/v1/tickets/${ticket.id}/assignee`).set("Cookie", cookie(admin))
+                .send({ assigneeId: support.id }).expect(200);
+        }
+        const now = new Date("2026-10-05T05:30:00Z");
+        const [oldClaim, recentClaim] = await prisma.notificationOutbox.findMany({ orderBy: { createdAt: "asc" }, take: 2 });
+        await prisma.notificationOutbox.update({ where: { id: oldClaim!.id }, data: {
+            status: NotificationStatus.PROCESSING, attempts: 1, lockedAt: new Date(now.getTime() - 600_000), lockedBy: "dead-worker",
+        } });
+        await prisma.notificationOutbox.update({ where: { id: recentClaim!.id }, data: {
+            status: NotificationStatus.PROCESSING, attempts: 1, lockedAt: now, lockedBy: "live-worker",
+        } });
+        const transport = new RecordingMailTransport();
+        const service = notificationService(transport, { batchSize: 1, lockTimeoutMs: 300_000 }, () => now);
+        expect(await service.processNotificationBatch()).toBe(1);
+        expect(await prisma.notificationOutbox.findUniqueOrThrow({ where: { id: oldClaim!.id } }))
+            .toMatchObject({ status: NotificationStatus.SENT, attempts: 2 });
+        expect(await prisma.notificationOutbox.findUniqueOrThrow({ where: { id: recentClaim!.id } }))
+            .toMatchObject({ status: NotificationStatus.PROCESSING, lockedBy: "live-worker" });
+        expect(transport.messages).toHaveLength(1);
+    });
+
+    it("encola recordatorios diarios por fecha local, deduplica en paralelo y omite destinos no elegibles", async () => {
+        const reporter = await createTestUser();
+        const technician = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const inactive = await createTestUser({ role: Role.SUB_MANAGER, supportAreas: [SupportArea.HARDWARE] });
+        await prisma.user.update({ where: { id: inactive.id }, data: { isActive: false } });
+        const overdueAt = new Date("2026-09-20T12:00:00Z");
+        const active = await dashboardTicket(reporter, { assigneeId: technician.id, createdAt: overdueAt, status: TicketStatus.IN_PROGRESS });
+        const unassigned = await dashboardTicket(reporter, { createdAt: overdueAt, status: TicketStatus.OPEN });
+        const inactiveTicket = await dashboardTicket(reporter, { assigneeId: inactive.id, createdAt: overdueAt, status: TicketStatus.OPEN });
+        await dashboardTicket(reporter, { assigneeId: technician.id, createdAt: new Date("2026-10-01T12:00:00Z"), status: TicketStatus.OPEN });
+        await dashboardTicket(reporter, { assigneeId: technician.id, createdAt: overdueAt, status: TicketStatus.COMPLETED,
+            completedAt: new Date("2026-10-01T12:00:00Z") });
+        const localMidnightWindow = new Date("2026-10-05T05:30:00.000Z"); // Oct 4 in America/Tijuana.
+        const service = notificationService(new RecordingMailTransport(), {}, () => localMidnightWindow);
+        const counts = await Promise.all([service.enqueueOverdueTicketReminders(), service.enqueueOverdueTicketReminders()]);
+        expect(counts.reduce((sum, value) => sum + value, 0)).toBe(1);
+        let reminders = await prisma.notificationOutbox.findMany({ where: { type: NOTIFICATION_TYPES.TICKET_ACTIVE_REMINDER } });
+        expect(reminders).toHaveLength(1);
+        expect(reminders[0]).toMatchObject({ ticketId: active.id, recipientEmail: technician.email,
+            dedupeKey: `ticket-reminder:${active.id}:2026-10-04`,
+            payload: { reminderDate: "2026-10-04", assigneeName: technician.fullName } });
+        expect(reminders.some((item) => item.ticketId === unassigned.id || item.ticketId === inactiveTicket.id)).toBe(false);
+        const nextLocalDay = new Date("2026-10-05T20:00:00.000Z");
+        expect(await notificationService(new RecordingMailTransport(), {}, () => nextLocalDay).enqueueOverdueTicketReminders()).toBe(1);
+        reminders = await prisma.notificationOutbox.findMany({ where: { type: NOTIFICATION_TYPES.TICKET_ACTIVE_REMINDER }, orderBy: { createdAt: "asc" } });
+        expect(reminders.map((item) => item.dedupeKey)).toEqual([
+            `ticket-reminder:${active.id}:2026-10-04`, `ticket-reminder:${active.id}:2026-10-05`,
+        ]);
+    });
+
+    it("marca SKIPPED un recordatorio ya encolado si el ticket se cerró antes de enviar", async () => {
+        const reporter = await createTestUser();
+        const support = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
+        const ticket = await dashboardTicket(reporter, { assigneeId: support.id, createdAt: new Date("2026-09-20T12:00:00Z") });
+        const now = new Date("2026-10-05T05:30:00Z");
+        const service = notificationService(new RecordingMailTransport(), {}, () => now);
+        expect(await service.enqueueOverdueTicketReminders()).toBe(1);
+        await prisma.ticket.update({ where: { id: ticket.id }, data: { status: TicketStatus.COMPLETED, completedAt: now } });
+        expect(await service.processNotificationBatch()).toBe(1);
+        expect(await prisma.notificationOutbox.findFirstOrThrow({ where: { ticketId: ticket.id } }))
+            .toMatchObject({ status: NotificationStatus.SKIPPED, attempts: 1 });
     });
 
     it("estado respeta área, asignación, transición, cancelación y timestamps terminales", async () => {

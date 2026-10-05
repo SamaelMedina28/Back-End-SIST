@@ -1,5 +1,6 @@
 import type { Role, SupportArea, TicketPriority, TicketStatus } from "../../../generated/prisma/client.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
+import type { NewNotification } from "../notification/notification.types.js";
 
 export interface TicketCreateInput {
     title: string;
@@ -31,6 +32,7 @@ export interface TicketRepository {
 
 export interface TicketMutationSnapshot {
     id: string; code: string; status: TicketStatus; priority: TicketPriority;
+    title: string; building: string; room: string | null;
     duplicateKey: string | null; completedAt: Date | null; cancelledAt: Date | null;
     cancellationReason: string | null; assigneeId: string | null; assignedAt: Date | null;
     updatedAt: Date; category: { supportArea: SupportArea };
@@ -38,7 +40,7 @@ export interface TicketMutationSnapshot {
 }
 
 export interface MutationActor {
-    id: string; fullName: string; role: Role; supportAreas: SupportArea[]; isActive: boolean;
+    id: string; email: string; fullName: string; role: Role; supportAreas: SupportArea[]; isActive: boolean;
 }
 
 export interface MutationEventInput {
@@ -65,6 +67,7 @@ export interface TicketMutationTransaction {
         cancelledAt?: Date | null; cancellationReason?: string | null;
     }): Promise<TicketMutationSnapshot>;
     createEvent(input: MutationEventInput): Promise<void>;
+    createNotification(input: NewNotification): Promise<void>;
     findIdempotencyRecord(userId: string, scope: string, key: string): Promise<IdempotencyRecordValue | null>;
     deleteIdempotencyRecord(id: string): Promise<void>;
     createIdempotencyRecord(input: NewIdempotencyRecord): Promise<void>;

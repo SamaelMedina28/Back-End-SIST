@@ -93,6 +93,8 @@ La Etapa 9 no requiere migración: los índices existentes de `Ticket` sobre `st
 
 La Etapa 10 añade `20261004212700_add_ticket_status_completed_at_index`, un índice aditivo `Ticket(status, completedAt)` para la cohorte de completados del reporte. Se aplicó mediante `migrate deploy` a `support_system_test` y `support_system`; en esta última solo se creó el índice, sin reset, truncate ni limpieza de datos. El índice existente de `createdAt` cubre la cohorte de creaciones. Las consultas del reporte agregan en PostgreSQL y agrupan días con la conversión desde timestamps UTC de Prisma a `APP_TIMEZONE`.
 
+La Etapa 11 añade `20261004220000_add_notification_claim_state`: agrega `PROCESSING` y `SKIPPED` a `NotificationStatus` y columnas nullable `NotificationOutbox.lockedAt`/`lockedBy` para claims recuperables entre instancias. Se aplicó a `support_system_test` y `support_system` con `migrate deploy`; es una migración aditiva y no altera filas existentes.
+
 La validación de esta etapa utiliza el PostgreSQL local del equipo, con base `support_system` y usuario `samael`. La contraseña no se guarda en el repositorio ni en esta documentación.
 
 Para configurar la aplicación localmente:

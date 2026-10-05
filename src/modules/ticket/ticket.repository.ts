@@ -3,6 +3,7 @@ import { AppError } from "../../common/errors/app-error.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import { MAX_ACTIVE_TICKETS } from "../category/category.service.js";
 import type { TicketCreateInput, TicketMutationSnapshot, TicketMutationTransaction, TicketQuery, TicketRecord, TicketRepository } from "./ticket.types.js";
+import type { NewNotification } from "../notification/notification.types.js";
 
 const ticketListInclude = {
     category: { select: { id: true, code: true, name: true, supportArea: true } },
@@ -112,12 +113,12 @@ export class PrismaTicketRepository implements TicketRepository {
             const unit = {
                 ticket: toSnapshot(await tx.ticket.findUnique({ where: { id: ticketId }, include: mutationInclude })),
                 findUser: async (id: string) => tx.user.findUnique({
-                    where: { id }, select: { id: true, fullName: true, role: true, supportAreas: true, isActive: true },
+                    where: { id }, select: { id: true, email: true, fullName: true, role: true, supportAreas: true, isActive: true },
                 }),
                 findUserForAssignment: async (id: string) => {
                     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${id}::uuid FOR UPDATE`;
                     return tx.user.findUnique({
-                        where: { id }, select: { id: true, fullName: true, role: true, supportAreas: true, isActive: true },
+                        where: { id }, select: { id: true, email: true, fullName: true, role: true, supportAreas: true, isActive: true },
                     });
                 },
                 updateTicket: async (data: Parameters<TicketMutationTransaction["updateTicket"]>[0]) => {
@@ -126,6 +127,11 @@ export class PrismaTicketRepository implements TicketRepository {
                 },
                 createEvent: async (input: { actorId: string; type: "ASSIGNED" | "UNASSIGNED" | "STATUS_CHANGED" | "PRIORITY_CHANGED"; fromStatus?: TicketStatus | null; toStatus?: TicketStatus | null; metadata: Record<string, unknown> }) => {
                     await tx.ticketEvent.create({ data: { ticketId, ...input, metadata: input.metadata as Prisma.InputJsonValue } });
+                },
+                createNotification: async (input: NewNotification) => {
+                    await tx.notificationOutbox.create({ data: {
+                        ...input, payload: input.payload as Prisma.InputJsonValue,
+                    } });
                 },
                 findIdempotencyRecord: async (userId: string, scope: string, key: string) => tx.idempotencyRecord.findUnique({
                     where: { userId_scope_key: { userId, scope, key } },

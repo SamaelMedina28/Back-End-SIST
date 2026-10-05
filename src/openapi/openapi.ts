@@ -360,7 +360,7 @@ export const openApiDocument = {
         "/api/v1/tickets/{id}/assign-self": {
             post: operation({
                 summary: "Autoasignar ticket",
-                description: "SUPPORT o SUB_MANAGER se asigna un ticket activo de una de sus áreas. La operación serializa concurrencia y emite ASSIGNED una sola vez.",
+                description: "SUPPORT o SUB_MANAGER se asigna un ticket activo de una de sus áreas. La operación serializa concurrencia y emite ASSIGNED una sola vez. También encola TICKET_ASSIGNED en la transacción; la respuesta no espera a SMTP.",
                 tags: ["Tickets"], security: cookieSecurity, roles: ["SUPPORT", "SUB_MANAGER"],
                 parameters: [idParameter], requestBody: { required: false, content: json({ $ref: "#/components/schemas/EmptyObject" }) },
                 responses: { 200: successResponse("Ticket asignado.", { $ref: "#/components/schemas/TicketAssignmentResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
@@ -369,14 +369,14 @@ export const openApiDocument = {
         "/api/v1/tickets/{id}/assignee": {
             put: operation({
                 summary: "Asignar o reasignar ticket",
-                description: "ADMIN asigna un ticket activo a una cuenta SUPPORT/SUB_MANAGER activa cuya área incluya la categoría. Repetir el mismo asignado no duplica el evento.",
+                description: "ADMIN asigna un ticket activo a una cuenta SUPPORT/SUB_MANAGER activa cuya área incluya la categoría. El cambio real persiste el evento y encola TICKET_ASSIGNED en la misma transacción; repetir el mismo asignado no duplica ninguno. La respuesta no espera a SMTP.",
                 tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN"], parameters: [idParameter],
                 requestBody: { required: true, content: json({ $ref: "#/components/schemas/AdminAssigneeInput" }) },
                 responses: { 200: successResponse("Ticket asignado.", { $ref: "#/components/schemas/TicketAssignmentResult" }), ...errorResponses([401, 403, 404, 409, 422]) },
             }),
             delete: operation({
                 summary: "Retirar asignación",
-                description: "ADMIN retira la asignación de un ticket activo. Si ya está sin asignar, responde 204 sin emitir evento.",
+                description: "ADMIN retira la asignación de un ticket activo sin encolar correo. Si ya está sin asignar, responde 204 sin emitir evento.",
                 tags: ["Tickets"], security: cookieSecurity, roles: ["ADMIN"], parameters: [idParameter],
                 responses: { 204: { description: "Asignación retirada o ya inexistente." }, ...errorResponses([401, 403, 404, 409, 422]) },
             }),

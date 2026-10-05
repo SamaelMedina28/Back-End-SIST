@@ -94,6 +94,19 @@ export const testConfig: AppConfig = {
     googleRedirectUri: "http://localhost:3000/api/v1/auth/google/callback",
     allowedEmailDomains: ["uabc.edu.mx"],
     appTimezone: "America/Tijuana",
+    smtpHost: "",
+    smtpPort: 587,
+    smtpSecure: false,
+    smtpUser: "",
+    smtpPassword: "",
+    smtpFrom: "",
+    notificationWorkerEnabled: false,
+    notificationWorkerIntervalMs: 10_000,
+    notificationBatchSize: 25,
+    notificationMaxAttempts: 5,
+    notificationLockTimeoutMs: 300_000,
+    reminderJobEnabled: false,
+    reminderCheckIntervalMs: 3_600_000,
 };
 
 export function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {

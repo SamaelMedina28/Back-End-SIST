@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Role, TicketPriority, TicketStatus, type SupportArea } from "../../../generated/prisma/client.js";
 import { AppError } from "../../common/errors/app-error.js";
 import { resolveEffectivePriority } from "../category/category.service.js";
@@ -6,6 +6,7 @@ import type { CatalogRepository } from "../category/category.types.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository, TicketMutationSnapshot, MutationActor, TicketListSource } from "./ticket.types.js";
 import { supportAreaTicketFilter } from "./ticket.scope.js";
+import { NOTIFICATION_TYPES } from "../notification/notification.constants.js";
 
 export function normalizeLocation(value: string | null | undefined): string | null {
     return value == null ? null : value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ") || null;
@@ -241,6 +242,12 @@ export class TicketService {
             const now = new Date();
             const updated = await tx.updateTicket({ assigneeId: actor.id, assignedAt: now });
             await tx.createEvent({ actorId: actor.id, type: "ASSIGNED", metadata: { assigneeId: actor.id, assignmentType: "SELF" } });
+            await tx.createNotification({
+                type: NOTIFICATION_TYPES.TICKET_ASSIGNED, recipientEmail: actor.email, ticketId: ticket.id,
+                dedupeKey: `ticket-assigned:${ticket.id}:${randomUUID()}`,
+                payload: { ticketCode: ticket.code, ticketTitle: ticket.title, priority: ticket.priority,
+                    building: ticket.building, room: ticket.room, assigneeName: actor.fullName },
+            });
             return assignmentData(updated);
         });
     }
@@ -258,10 +265,17 @@ export class TicketService {
             if (target.role !== Role.SUPPORT && target.role !== Role.SUB_MANAGER) fail(409, "INVALID_ASSIGNEE_ROLE", "La persona debe tener un rol de soporte.");
             if (!target.supportAreas.includes(ticket.category.supportArea)) fail(409, "ASSIGNEE_AREA_MISMATCH", "La persona no pertenece al área de soporte del ticket.");
             if (ticket.assigneeId === target.id) return assignmentData(ticket);
-            const updated = await tx.updateTicket({ assigneeId: target.id, assignedAt: new Date() });
+            const assignedAt = new Date();
+            const updated = await tx.updateTicket({ assigneeId: target.id, assignedAt });
             await tx.createEvent({ actorId: actor.id, type: "ASSIGNED", metadata: {
                 assignmentType: "ADMIN", previousAssigneeId: ticket.assigneeId, assigneeId: target.id,
             } });
+            await tx.createNotification({
+                type: NOTIFICATION_TYPES.TICKET_ASSIGNED, recipientEmail: target.email, ticketId: ticket.id,
+                dedupeKey: `ticket-assigned:${ticket.id}:${randomUUID()}`,
+                payload: { ticketCode: ticket.code, ticketTitle: ticket.title, priority: ticket.priority,
+                    building: ticket.building, room: ticket.room, assigneeName: target.fullName },
+            });
             return assignmentData(updated);
         });
     }

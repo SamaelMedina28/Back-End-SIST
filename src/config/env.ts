@@ -15,6 +15,28 @@ const rawEnvSchema = z.object({
         try { new Intl.DateTimeFormat("en-US", { timeZone: value }); return true; }
         catch { return false; }
     }, "APP_TIMEZONE debe ser una zona horaria IANA válida."),
+    SMTP_HOST: z.string().default(""),
+    SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+    SMTP_SECURE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+    SMTP_USER: z.string().default(""),
+    SMTP_PASSWORD: z.string().default(""),
+    SMTP_FROM: z.string().default(""),
+    NOTIFICATION_WORKER_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+    NOTIFICATION_WORKER_INTERVAL_MS: z.coerce.number().int().min(1000).max(86_400_000).default(10_000),
+    NOTIFICATION_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(25),
+    NOTIFICATION_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+    NOTIFICATION_LOCK_TIMEOUT_MS: z.coerce.number().int().min(1000).max(3_600_000).default(300_000),
+    REMINDER_JOB_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
+    REMINDER_CHECK_INTERVAL_MS: z.coerce.number().int().min(60_000).max(86_400_000).default(3_600_000),
+}).superRefine((value, context) => {
+    if (Boolean(value.SMTP_USER) !== Boolean(value.SMTP_PASSWORD)) {
+        context.addIssue({ code: "custom", path: [value.SMTP_USER ? "SMTP_PASSWORD" : "SMTP_USER"],
+            message: "SMTP_USER y SMTP_PASSWORD deben configurarse juntos." });
+    }
+    if (value.NODE_ENV === "production" && value.NOTIFICATION_WORKER_ENABLED) {
+        if (!value.SMTP_HOST) context.addIssue({ code: "custom", path: ["SMTP_HOST"], message: "SMTP_HOST es obligatorio con el worker habilitado en producción." });
+        if (!value.SMTP_FROM) context.addIssue({ code: "custom", path: ["SMTP_FROM"], message: "SMTP_FROM es obligatorio con el worker habilitado en producción." });
+    }
 });
 
 export interface AppConfig {
@@ -29,6 +51,19 @@ export interface AppConfig {
     googleRedirectUri: string;
     allowedEmailDomains: string[];
     appTimezone: string;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: boolean;
+    smtpUser: string;
+    smtpPassword: string;
+    smtpFrom: string;
+    notificationWorkerEnabled: boolean;
+    notificationWorkerIntervalMs: number;
+    notificationBatchSize: number;
+    notificationMaxAttempts: number;
+    notificationLockTimeoutMs: number;
+    reminderJobEnabled: boolean;
+    reminderCheckIntervalMs: number;
 }
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -54,5 +89,18 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
         googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
         allowedEmailDomains,
         appTimezone: parsed.APP_TIMEZONE,
+        smtpHost: parsed.SMTP_HOST,
+        smtpPort: parsed.SMTP_PORT,
+        smtpSecure: parsed.SMTP_SECURE,
+        smtpUser: parsed.SMTP_USER,
+        smtpPassword: parsed.SMTP_PASSWORD,
+        smtpFrom: parsed.SMTP_FROM,
+        notificationWorkerEnabled: parsed.NOTIFICATION_WORKER_ENABLED,
+        notificationWorkerIntervalMs: parsed.NOTIFICATION_WORKER_INTERVAL_MS,
+        notificationBatchSize: parsed.NOTIFICATION_BATCH_SIZE,
+        notificationMaxAttempts: parsed.NOTIFICATION_MAX_ATTEMPTS,
+        notificationLockTimeoutMs: parsed.NOTIFICATION_LOCK_TIMEOUT_MS,
+        reminderJobEnabled: parsed.REMINDER_JOB_ENABLED,
+        reminderCheckIntervalMs: parsed.REMINDER_CHECK_INTERVAL_MS,
     };
 }

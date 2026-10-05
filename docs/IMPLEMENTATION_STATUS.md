@@ -1,6 +1,6 @@
 # Estado de implementación del backend
 
-> Corte de la Etapa 10: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
+> Corte de la Etapa 11: 2026-10-04. El contrato canónico está en [BACKEND_CONTRACT.md](./BACKEND_CONTRACT.md).
 
 | Módulo | Estado | Endpoints | Tests |
 |---|---|---:|---:|
@@ -57,7 +57,8 @@
 | Support Member OAuth integration | DONE | Incluido en OAuth | PostgreSQL real: vinculación, conservación de rol y rechazo de inactivos |
 | Support Member PostgreSQL tests | DONE | Incluidos en suite Tickets Core | Guard estricto de `support_system_test` |
 | Reportes | DONE | 1/1 | PostgreSQL real: RBAC, validación, cohortes, filtros, días locales y técnicos inactivos |
-| Notificaciones y outbox worker | NOT_STARTED | Sin endpoint directo | 0 |
+| Notification Outbox y correo SMTP | DONE | Sin endpoint directo | PostgreSQL real y FakeMailTransport; SMTP real pendiente de credenciales |
+| Recordatorios de tickets activos | DONE | Job interno | PostgreSQL real: edad, asignado activo, dedupe local y cierre |
 
 ## Etapa 2 implementada
 
@@ -128,7 +129,8 @@
 - La cookie temporal de OAuth se elimina antes de procesar el callback, de modo que el navegador no la conserva para una reutilización normal. No se añadió Redis ni otra persistencia de challenges porque esta etapa permite explícitamente una cookie HTTP-only temporal.
 - La integración real con Google no se ejecutó porque no se proporcionaron credenciales. La implementación y las rutas fueron probadas con un proveedor simulado.
 - En el corte de Etapa 3 OpenAPI aún no se implementaba; quedó implementado y validado en las etapas posteriores.
-- SMTP y worker de notificaciones siguen fuera de las etapas completadas.
+- La comprobación con servidor SMTP real queda pendiente hasta configurar credenciales institucionales.
+- La etapa 11 completa outbox transaccional, envío Nodemailer, reintentos y recordatorios diarios; SMTP real se prueba manualmente cuando se configuren credenciales.
 - Categorías y subcategorías se ordenan por `name ASC, id ASC`; sugerencias por `title ASC, id ASC`. El listado usa una lectura anidada del repositorio Prisma para evitar N+1.
 - `includeInactive=true` está disponible únicamente para ADMIN. Las bajas son lógicas e idempotentes; desactivar categoría no desactiva sus subcategorías.
 - `SupportSuggestion` no recibió seed: no había contenido técnico autorizado para inventar. El endpoint devuelve una lista vacía cuando no hay filas activas.
@@ -170,7 +172,11 @@
 - Los stacks se registran internamente para errores inesperados y no se serializan al cliente.
 - La Etapa 10 agrega la migración aditiva `20261004212700_add_ticket_status_completed_at_index`, aplicada a `support_system_test` y `support_system`. En `support_system` solo se creó el índice; no hubo reset, truncate ni limpieza de datos. El reporte usa cuatro consultas agregadas SQL parametrizadas, respeta `APP_TIMEZONE` y conserva el JSON congelado del contrato.
 - Validación de Etapa 10: 7 archivos y 195 pruebas aprobadas; 81 funcionales y 3 guards usaron la suite PostgreSQL real. `SwaggerParser.validate` está incluido en las pruebas de OpenAPI.
+- Migración `20261004220000_add_notification_claim_state` añade PROCESSING/SKIPPED y el lease recuperable; aplicada a `support_system_test` y `support_system` mediante `migrate deploy`, sin reset ni limpieza.
+- Las asignaciones reales persisten Ticket, TicketEvent y `TICKET_ASSIGNED` en una transacción. El worker reclama con `FOR UPDATE SKIP LOCKED`, envía tras cerrar el claim, reintenta con backoff limitado y recupera leases vencidos. Los reminders usan `dedupeKey` con fecha local y marcan SKIPPED cuando el ticket ya no cumple.
+- Verificación de Etapa 11: 8 archivos y 208 pruebas aprobadas; 87 pruebas funcionales PostgreSQL reales y 3 guards de base. `prisma format/validate/generate`, `tsc --noEmit`, `pnpm build`, `SwaggerParser.validate` y `git diff --check` aprobaron.
+- La cobertura de correo usa `FakeMailTransport`; Nodemailer no contacta un SMTP de pruebas. La entrega SMTP real requiere configuración institucional y queda pendiente.
 
 ## Próxima etapa
 
-Dashboard por rol quedó implementado en la Etapa 9 en `GET /api/v1/dashboard`, sin migración nueva. USER ve contadores y tickets propios; SUPPORT y SUB_MANAGER ven tickets de sus áreas y completados según `APP_TIMEZONE`; ADMIN ve métricas globales y carga de todos los técnicos activos. Los contadores usan `count`, la carga usa dos `groupBy` y las listas están limitadas mediante `take`; no hay N+1 por técnico ni caché. Reports API quedó implementada en Etapa 10 con agregaciones PostgreSQL y el índice aditivo de completados. El worker de notificaciones sigue pendiente.
+Dashboard por rol quedó implementado en la Etapa 9 en `GET /api/v1/dashboard`, sin migración nueva. Reports API quedó implementada en Etapa 10 con agregaciones PostgreSQL. En Etapa 11 se terminó Notification Outbox, correo asíncrono y recordatorios sin agregar rutas públicas. El quality/security/traceability audit sigue NOT_STARTED.

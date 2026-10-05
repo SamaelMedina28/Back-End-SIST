@@ -927,6 +927,9 @@ describe("OpenAPI and Swagger UI", () => {
         expect(response.body.paths["/api/v1/tickets"].get).toBeDefined();
         expect(response.body.paths["/api/v1/tickets/{id}"].get).toBeDefined();
         expect(response.body.paths["/api/v1/tickets/{id}/events"].get).toBeDefined();
+        expect(response.body.paths["/api/v1/tickets/{id}/assign-self"].post.description).toContain("TICKET_ASSIGNED");
+        expect(response.body.paths["/api/v1/tickets/{id}/assignee"].put.description).toContain("TICKET_ASSIGNED");
+        expect(response.body.paths["/api/v1/notifications/process"]).toBeUndefined();
         expect(response.body.paths["/api/v1/activity-log"].get).toBeDefined();
         expect(response.body.paths["/api/v1/activity-log"].post).toBeDefined();
         expect(response.body.paths["/api/v1/activity-log/{id}"].get).toBeDefined();

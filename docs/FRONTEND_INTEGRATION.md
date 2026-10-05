@@ -272,6 +272,15 @@ const events = await api(`/tickets/${ticketId}/events`);
 
 `SUPPORT`/`SUB_MANAGER` puede autoasignarse con `POST /api/v1/tickets/:id/assign-self`; `ADMIN` asigna/reasigna con `PUT /api/v1/tickets/:id/assignee` y retira asignación con `DELETE` en esa misma ruta. Solo se muestran acciones para tickets activos; el servidor vuelve a validar rol, área y estado de manera atómica.
 
+Una asignación exitosa encola el correo al nuevo técnico junto con el cambio y el evento. La respuesta HTTP no espera al SMTP; si recibe `200`, actualiza la UI como asignado. No llames otra ruta para correo ni repitas la asignación por una posible demora del email. La falla SMTP se reintenta en backend sin revertir la asignación.
+
+```ts
+await api(`/tickets/${ticketId}/assignee`, {
+  method: "PUT",
+  body: JSON.stringify({ assigneeId: technicianId }),
+});
+```
+
 Para cambiar el estado, ofrece únicamente las transiciones válidas: `OPEN → IN_REVIEW/IN_PROGRESS`, `IN_REVIEW → IN_PROGRESS` e `IN_PROGRESS → COMPLETED`; desde cada estado activo también se puede cancelar. `CANCELLED` requiere una nota (1–500 caracteres). `SUPPORT` y `SUB_MANAGER` solo pueden cambiar tickets asignados a sí mismos en sus áreas; `ADMIN` puede hacerlo en cualquier área.
 
 Genera una clave de idempotencia por intento lógico de cambio de estado y conserva exactamente la misma clave y body ante reintentos de red. No reutilices la clave para una transición o nota distinta. El backend guarda respuestas durante 24 horas; un body distinto con la misma clave produce `409 IDEMPOTENCY_CONFLICT`.

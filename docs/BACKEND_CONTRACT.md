@@ -168,8 +168,12 @@ PRIORITY_CHANGED
 NotificationStatus:
 
 ### PENDING
+PROCESSING
 ### SENT
 ### FAILED
+SKIPPED
+
+`PROCESSING` y `SKIPPED` se incorporan de forma aditiva en la Etapa 11 para claims recuperables y recordatorios obsoletos; ver la aclaración de implementación de la sección 34.
 
 ## 5. MODELO USER
 
@@ -1718,6 +1722,16 @@ Cuando se asigna un ticket:
 Si SMTP falla:
 
 el ticket DEBE permanecer asignado.
+
+### Aclaración de implementación — Etapa 11 (2026-10-04)
+
+- `NotificationOutbox` sigue siendo el único modelo de notificaciones. `type` es texto; los tipos estables de la aplicación son `TICKET_ASSIGNED` y `TICKET_ACTIVE_REMINDER`.
+- Para permitir claims recuperables entre instancias, `NotificationStatus` se amplía aditivamente con `PROCESSING` y `SKIPPED`, y `NotificationOutbox` recibe `lockedAt` y `lockedBy`. `PENDING` puede ser reclamado; `PROCESSING` representa un envío reservado; `SENT`, `FAILED` y `SKIPPED` son estados finales. Los claims vencidos se recuperan con un timeout configurable; si ya agotaron intentos, pasan a FAILED.
+- El worker reclama hasta el batch configurado mediante PostgreSQL `FOR UPDATE SKIP LOCKED`, persiste el claim y cierra esa transacción antes de llamar SMTP. Los intentos se incrementan al reclamar. Los fallos temporales regresan a PENDING con backoff de 1, 5, 15 y 30 minutos (con tope de 30); al alcanzar el máximo pasan a FAILED y dejan de seleccionarse automáticamente.
+- La asignación que realmente cambia `assigneeId` crea en la misma transacción `TicketEvent ASSIGNED` y `TICKET_ASSIGNED PENDING`, dirigido al nuevo asignado. El mismo asignado no crea evento ni notificación; quitar asignación no envía correo. El payload conserva solo código, título, prioridad, ubicación y nombre actual del asignado. SMTP sucede después del commit; la respuesta HTTP confirma persistencia/encolado, no entrega del correo.
+- Los recordatorios consideran tickets `OPEN`, `IN_REVIEW` o `IN_PROGRESS` con `createdAt <= now - 7 días completos`, técnico asignado y cuenta activa SUPPORT/SUB_MANAGER. Tickets sin asignar o con técnico inactivo no generan correo. `dedupeKey` es `ticket-reminder:{ticketId}:{fecha-local}` y la restricción UNIQUE de PostgreSQL resuelve ejecuciones paralelas; una fecha nueva en `APP_TIMEZONE` admite un recordatorio nuevo.
+- Antes de enviar un recordatorio, el worker vuelve a comprobar que el ticket siga activo y que conserve al destinatario asignado y activo. Si dejó de cumplir, el outbox pasa a SKIPPED sin SMTP.
+- El claim impide que dos workers envíen simultáneamente el mismo registro. SMTP genérico no permite transacción distribuida con PostgreSQL: si el servidor acepta el correo y el proceso cae antes de marcar SENT, al vencer el claim puede ocurrir una entrega repetida. La recuperación prioriza no perder notificaciones y ofrece entrega al menos una vez en esa ventana incierta.
 
 Recordatorio:
 
