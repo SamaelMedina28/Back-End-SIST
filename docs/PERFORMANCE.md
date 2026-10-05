@@ -19,8 +19,38 @@ La suite funcional no determina throughput ni latencia p95/p99. No se han medido
 
 ## Procedimiento de carga seguro
 
-Usa un ambiente aislado con migraciones aplicadas y datos sintéticos, nunca la base `support_system` compartida ni producción. Aprovisiona un usuario de prueba con rol/área adecuados, autentícalo por OAuth en ese ambiente y pasa su cookie de sesión al gestor de carga desde un secreto efímero del runner (no la escribas en el script, archivo versionado, argumentos visibles ni logs). Restringe el origen a un host de test explícito.
+Usa un ambiente aislado con migraciones aplicadas y datos sintéticos, nunca `support_system` ni producción. Aprovisiona un usuario de prueba (ADMIN para reportes; soporte para asignaciones), autentícalo por OAuth en ese ambiente y pasa la cookie desde un secreto efímero del runner: no la escribas en código, archivo versionado, argumentos visibles ni logs. Mantén SMTP apagado o utiliza un sink.
 
-Con k6 instalado fuera de las dependencias de producción, prepara un script local que use `__ENV.LOAD_TEST_BASE_URL`, `__ENV.LOAD_TEST_COOKIE` y un perfil de 100 VUs. Comprueba previamente `GET /health` y `GET /ready`; luego ejecuta escenarios de lectura (listado paginado, detalle, dashboard y reportes) y de escritura sobre registros desechables del ambiente de test (crear, asignar y transición). Usa códigos/títulos únicos y limpia únicamente los fixtures de esa base al terminar. Mantén pausado el envío SMTP real o utiliza un sink controlado.
+Con k6 instalado fuera de las dependencias de producción, crea un archivo temporal local `load-test.js` con este escenario de lectura (requiere explícitamente ambos valores y no tiene URL/cookie predeterminados):
 
-Registra commit, configuración del runner, versión de PostgreSQL, tamaño de pool, VUs/rampa/duración, volumen inicial, tasa de error y latencias p50/p95/p99 por operación. Compara con umbrales aprobados por producto/operaciones; no declares cumplimiento solo por terminar sin errores. `scripts/load-test.mjs` no se incluye: sin estrategia de sesión y datos de prueba ya definidos, un generador genérico podría enviar escrituras a un entorno equivocado.
+```js
+import http from "k6/http";
+import { check } from "k6";
+
+const base = __ENV.LOAD_TEST_BASE_URL;
+const cookie = __ENV.LOAD_TEST_COOKIE;
+if (!base || !cookie) throw new Error("Define LOAD_TEST_BASE_URL y LOAD_TEST_COOKIE para un ambiente aislado");
+if (new URL(base).hostname.toLowerCase().includes("prod")) throw new Error("No apuntes la prueba a producción");
+
+export const options = { vus: 100, duration: "5m" };
+export default function () {
+  const response = http.get(`${base}/api/v1/tickets?page=1&pageSize=20`, {
+    headers: { Cookie: cookie }, tags: { operation: "ticket-list" },
+  });
+  check(response, { "ticket list responds 200": (res) => res.status === 200 });
+}
+```
+
+Arranca primero el backend configurado contra la base desechable; comprueba `/health` y `/ready`. Ejecuta el escenario pasando URL de test y cookie desde un gestor de secretos o variables efímeras del shell/runner. Para detalle, dashboard y reportes añade IDs/fechas del fixture y etiquetas de operación. Mide escrituras (crear, asignar, cambiar estado) como escenario separado, con clave/título/ubicación únicos y limpieza limitada a la base aislada; no reutilices la carga de lectura para generar tickets.
+
+Ejemplo de ejecución interactiva en una shell local (la cookie no se escribe como argumento ni se muestra al teclearla):
+
+```bash
+export LOAD_TEST_BASE_URL='http://localhost:3000'
+read -rs LOAD_TEST_COOKIE
+export LOAD_TEST_COOKIE
+k6 run load-test.js
+unset LOAD_TEST_COOKIE
+```
+
+Registra commit, configuración del runner, versión PostgreSQL, tamaño de pool, VUs/rampa/duración, volumen inicial, tasa de error y latencias p50/p95/p99 por operación. Compara con umbrales aprobados por producto/operaciones; no declares cumplimiento solo por terminar sin errores. El script no se agrega al repositorio porque depende de usuario, rol y fixtures específicos de cada ambiente. No se ejecutó una prueba de 100 VUs en esta auditoría.

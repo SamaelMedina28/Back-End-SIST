@@ -3,3 +3,9 @@ allowBuilds:
   '@scarf/scarf': false
   esbuild: true
   prisma: true
+overrides:
+  deepmerge-ts: 8.0.2
+  mysql2: 3.23.1
+  fast-uri: 3.1.8
+  qs: 6.16.0
+  brace-expansion@^5.0.0: 5.0.12

@@ -11,7 +11,7 @@ interface PrismaField {
  */
 export function generateSchema(
     modelName: string,
-    fields: readonly PrismaField[] | readonly any[],
+    fields: readonly PrismaField[],
 ): string {
     // Campos autogenerados que no se deben pedir al CREAR un registro
     const ignoredFields = ["id", "createdAt", "updatedAt"];

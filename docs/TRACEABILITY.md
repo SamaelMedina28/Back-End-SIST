@@ -24,6 +24,7 @@ Estados: `DONE` = implementación y evidencia en el repositorio; `PARTIAL` = imp
 | Regla “no asuntos personales” | IMPLEMENTED_WITH_ASSUMPTION / POLICY | No se añadió IA, heurística ni clasificación automática no especificada | Política operativa y definición determinista pendientes |
 | Teléfono de onboarding opcional | IMPLEMENTED_WITH_ASSUMPTION | `phone` admite `null`/ausencia; ticket conserva `contactPhone ?? user.phone ?? null` | Confirmar con producto si debe ser opcional u obligatorio |
 | Logging estructurado, request ID y protección de secretos en URL | DONE | Pino; logging solo `req.path`; request ID entrante validado; tests de code/state OAuth | Revisar políticas de retención de logs en infraestructura |
+| Audit de dependencias | DONE (0 advisories) | `pnpm audit` sin vulnerabilidades tras overrides de versiones transitivas corregidas | Revisar de nuevo periódicamente y retirar overrides cuando el upstream los incorpore |
 | Ruta funcional documentada en API, OpenAPI y router | DONE | Test compara inventario esperado, `openApiDocument` y encabezados de `docs/API.md` | Mantener el test al cambiar routers |
 | 100 usuarios concurrentes / latencias objetivo | PARTIAL / NOT VERIFIED | Hay tests de concurrencia de reglas y consultas agregadas/indexadas | No hay benchmark de carga ni medición de SLA; ejecutar procedimiento en `PERFORMANCE.md` |
 | Disponibilidad 99.5 %, backups, RPO 12 h, RTO 2 h | OPS | No afirmados como propiedades del código | SLO, backups y ejercicios de restauración corresponden a infraestructura |

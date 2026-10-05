@@ -33,4 +33,4 @@ Las respuestas de error siguen el envelope del backend: `success: false`, `error
 | `RATE_LIMIT_EXCEEDED` | 429 | Se excedió el límite temporal de OAuth/onboarding; esperar antes de reintentar. |
 | `INTERNAL_ERROR` | 500 | Error inesperado; conservar `requestId` para diagnóstico y no repetir operaciones de escritura a ciegas. |
 
-Los códigos se originan en `AppError`, el middleware Zod y el middleware de rutas no encontradas. La lista anterior cubre los códigos de dominio y comunes encontrados en el backend al cierre de la auditoría; los endpoints y sus casos HTTP específicos se documentan en [API.md](API.md) y en el [OpenAPI servido por la aplicación](/api/openapi.json).
+Los códigos se originan en `AppError`, el middleware Zod y el middleware de rutas no encontradas. La lista anterior cubre los códigos de dominio y comunes encontrados en el backend al cierre de la auditoría; los endpoints y sus casos HTTP específicos se documentan en [API.md](API.md) y en el OpenAPI servido por `/api/openapi.json`.

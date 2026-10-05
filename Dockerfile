@@ -20,6 +20,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist/src ./dist/src
+COPY --from=build --chown=node:node /app/dist/lib ./dist/lib
 COPY --from=build --chown=node:node /app/generated/prisma ./generated/prisma
 COPY --chown=node:node package.json ./package.json
 USER node

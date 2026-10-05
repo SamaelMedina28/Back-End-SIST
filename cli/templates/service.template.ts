@@ -11,26 +11,29 @@ export const ${model}Service = {
         return await prisma.${modelLower}.findMany();
     },
 
-    async getById(id: number) {
+    async getById(id: Parameters<typeof prisma.${modelLower}.findUnique>[0]["where"]["id"]) {
         return await prisma.${modelLower}.findUnique({
             where: { id },
         });
     },
 
-    async create(data: any) {
+    async create(data: Parameters<typeof prisma.${modelLower}.create>[0]["data"]) {
         return await prisma.${modelLower}.create({
             data,
         });
     },
 
-    async update(id: number, data: any) {
+    async update(
+        id: Parameters<typeof prisma.${modelLower}.update>[0]["where"]["id"],
+        data: Parameters<typeof prisma.${modelLower}.update>[0]["data"],
+    ) {
         return await prisma.${modelLower}.update({
             where: { id },
             data,
         });
     },
 
-    async delete(id: number) {
+    async delete(id: Parameters<typeof prisma.${modelLower}.delete>[0]["where"]["id"]) {
         return await prisma.${modelLower}.delete({
             where: { id },
         });
