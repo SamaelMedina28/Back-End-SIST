@@ -484,14 +484,16 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect((await post(user, { ...baseBody(hardwareId, hardwareSubId), inventoryItemId: item.id })).status).toBe(201);
     });
 
-    it("UNIQUE detecta duplicados normalizados; room y subcategoría distintas son válidas", async () => {
+    it("UNIQUE detecta duplicados normalizados por categoría y ubicación, aunque cambie la subcategoría", async () => {
         const user = await createTestUser();
         expect((await post(user, baseBody(hardwareId, hardwareSubId))).status).toBe(201);
         const duplicate = await post(user, { ...baseBody(hardwareId, hardwareSubId), building: "  EDIFICIO   6  ", room: " 603 " });
         expect(duplicate.status).toBe(409);
         expect(duplicate.body.error.code).toBe("DUPLICATE_TICKET");
         expect((await post(user, baseBody(hardwareId, hardwareSubId, "604"))).status).toBe(201);
-        expect((await post(user, baseBody(hardwareId, hardwareOtherSubId, "603"))).status).toBe(201);
+        const otherSubcategory = await post(user, baseBody(hardwareId, hardwareOtherSubId, "603"));
+        expect(otherSubcategory.status).toBe(409);
+        expect(otherSubcategory.body.error.code).toBe("DUPLICATE_TICKET");
     });
 
     it("dos POST concurrentes iguales producen exactamente un 201 y un 409", async () => {
@@ -542,6 +544,19 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const repeated = await post(user, baseBody(hardwareId, hardwareSubId, "REPEAT"));
         expect(repeated.status).toBe(201);
         expect(await prisma.ticket.count({ where: { reporterId: user.id, status: TicketStatus.OPEN } })).toBe(10);
+    });
+
+    it("CANCELLED libera duplicateKey y permite volver a reportar la misma ubicación", async () => {
+        const reporter = await createTestUser();
+        const admin = await createTestUser({ role: Role.ADMIN });
+        const first = await createTestTicket(reporter, { room: "CANCEL-REPEAT" });
+        const cancelled = await request(app).patch(`/api/v1/tickets/${first.id}/status`)
+            .set("Cookie", cookie(admin)).send({ status: TicketStatus.CANCELLED, note: "Ya no se requiere" });
+        expect(cancelled.status).toBe(200);
+        expect(await prisma.ticket.findUniqueOrThrow({ where: { id: first.id } })).toMatchObject({
+            status: TicketStatus.CANCELLED, duplicateKey: null,
+        });
+        expect((await post(reporter, baseBody(hardwareId, hardwareSubId, "CANCEL-REPEAT"))).status).toBe(201);
     });
 
     it("la secuencia genera number/code coherentes para POST concurrentes distintos", async () => {

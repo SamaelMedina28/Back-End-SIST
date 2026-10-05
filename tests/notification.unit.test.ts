@@ -59,6 +59,8 @@ describe("Notifications: templates, retries and reminders", () => {
         expect(() => loadConfig({ ...base, SMTP_PORT: "70000" })).toThrow();
         expect(() => loadConfig({ ...base, NOTIFICATION_BATCH_SIZE: "0" })).toThrow();
         expect(() => loadConfig({ ...base, SMTP_USER: "user-only" })).toThrow();
+        expect(() => loadConfig({ ...base, REMINDER_JOB_ENABLED: "true" })).toThrow();
+        expect(() => loadConfig({ ...base, NOTIFICATION_WORKER_ENABLED: "true", REMINDER_JOB_ENABLED: "true" })).not.toThrow();
         const production = { ...base, NODE_ENV: "production", NOTIFICATION_WORKER_ENABLED: "true" };
         expect(() => loadConfig(production)).toThrow();
         expect(loadConfig({ ...production, SMTP_HOST: "smtp.example.test", SMTP_FROM: "support@example.test",

@@ -9,13 +9,14 @@ describe("Ticket helpers and HTTP validation", () => {
         expect(normalizeLocation(null)).toBeNull();
     });
 
-    it("duplicateKey es determinística y distingue null, room y subcategoría", () => {
+    it("duplicateKey es determinística por categoría y ubicación, sin distinguir subcategoría", () => {
         const base = { categoryId: "a", subcategoryId: "b", building: " Edificio   6 ", room: " 603 " };
         const key = ticketDuplicateKey(base);
         expect(key).toMatch(/^[a-f0-9]{64}$/u);
         expect(key).toBe(ticketDuplicateKey({ ...base, building: "edificio 6", room: "603" }));
         expect(key).not.toBe(ticketDuplicateKey({ ...base, room: null }));
-        expect(key).not.toBe(ticketDuplicateKey({ ...base, subcategoryId: null }));
+        expect(key).toBe(ticketDuplicateKey({ ...base, subcategoryId: null }));
+        expect(key).not.toBe(ticketDuplicateKey({ ...base, categoryId: "other-category" }));
         expect(key).not.toBe(ticketDuplicateKey({ ...base, room: "604" }));
     });
 

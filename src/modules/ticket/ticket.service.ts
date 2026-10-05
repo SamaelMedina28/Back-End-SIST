@@ -12,10 +12,10 @@ export function normalizeLocation(value: string | null | undefined): string | nu
     return value == null ? null : value.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu, " ") || null;
 }
 
-export function ticketDuplicateKey(input: Pick<TicketCreateInput, "categoryId" | "subcategoryId" | "building" | "room">): string {
+export function ticketDuplicateKey(input: Pick<TicketCreateInput, "categoryId" | "building" | "room">): string {
     // JSON preserva límites entre componentes y diferencia null de strings.
     const canonical = JSON.stringify([
-        input.categoryId, input.subcategoryId ?? null, normalizeLocation(input.building), normalizeLocation(input.room),
+        input.categoryId, normalizeLocation(input.building), normalizeLocation(input.room),
     ]);
     return createHash("sha256").update(canonical).digest("hex");
 }

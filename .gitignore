@@ -2,8 +2,8 @@ node_modules
 
 # Seguridad: Variables de entorno ocultas
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Cliente de Prisma generado automáticamente
 /generated/prisma
@@ -19,3 +19,4 @@ Thumbs.db
 
 # Archivos compilados
 dist/*
+coverage/

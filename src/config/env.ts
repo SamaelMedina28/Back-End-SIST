@@ -33,6 +33,10 @@ const rawEnvSchema = z.object({
         context.addIssue({ code: "custom", path: [value.SMTP_USER ? "SMTP_PASSWORD" : "SMTP_USER"],
             message: "SMTP_USER y SMTP_PASSWORD deben configurarse juntos." });
     }
+    if (value.REMINDER_JOB_ENABLED && !value.NOTIFICATION_WORKER_ENABLED) {
+        context.addIssue({ code: "custom", path: ["NOTIFICATION_WORKER_ENABLED"],
+            message: "El job de recordatorios requiere el worker de notificaciones habilitado." });
+    }
     if (value.NODE_ENV === "production" && value.NOTIFICATION_WORKER_ENABLED) {
         if (!value.SMTP_HOST) context.addIssue({ code: "custom", path: ["SMTP_HOST"], message: "SMTP_HOST es obligatorio con el worker habilitado en producción." });
         if (!value.SMTP_FROM) context.addIssue({ code: "custom", path: ["SMTP_FROM"], message: "SMTP_FROM es obligatorio con el worker habilitado en producción." });

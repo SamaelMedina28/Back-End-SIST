@@ -8,6 +8,8 @@ import { openApiDocument } from "../src/openapi/openapi.js";
 import { AppError } from "../src/common/errors/app-error.js";
 import { errorMiddleware, notFoundMiddleware } from "../src/middlewares/error.middleware.js";
 import { requestIdMiddleware } from "../src/middlewares/request-id.middleware.js";
+import { requestLoggerMiddleware } from "../src/middlewares/request-logger.middleware.js";
+import { logger } from "../src/common/logger.js";
 import { hasSupportArea, requireRole } from "../src/middlewares/rbac.middleware.js";
 import {
     ONBOARDING_COOKIE,
@@ -553,6 +555,31 @@ describe("cookies and health", () => {
         expect(response.body.error.code).toBe("INTERNAL_ERROR");
         expect(JSON.stringify(response.body)).not.toContain("stack");
         expect(JSON.stringify(response.body)).not.toContain("private technical detail");
+    });
+
+    it("validates incoming request IDs and excludes query secrets from request logs", async () => {
+        const app = express();
+        app.use(requestIdMiddleware);
+        app.use(requestLoggerMiddleware);
+        app.get("/oauth/callback", (_req, res) => res.sendStatus(200));
+        const logSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
+
+        try {
+            const unsafeId = await request(app).get("/oauth/callback?code=oauth-code&state=oauth-state")
+                .set("X-Request-Id", "x".repeat(129)).expect(200);
+            expect(unsafeId.headers["x-request-id"]).toMatch(/^req_/u);
+
+            const safeId = await request(app).get("/oauth/callback?code=oauth-code&state=oauth-state")
+                .set("X-Request-Id", "req_safe-123").expect(200);
+            expect(safeId.headers["x-request-id"]).toBe("req_safe-123");
+            expect(logSpy.mock.calls.map(([fields]) => fields)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ url: "/oauth/callback" }),
+            ]));
+            expect(JSON.stringify(logSpy.mock.calls)).not.toContain("oauth-code");
+            expect(JSON.stringify(logSpy.mock.calls)).not.toContain("oauth-state");
+        } finally {
+            logSpy.mockRestore();
+        }
     });
 });
 

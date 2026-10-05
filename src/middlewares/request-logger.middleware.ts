@@ -8,7 +8,8 @@ export function requestLoggerMiddleware(req: Request, res: Response, next: NextF
         logger.info({
             requestId: req.requestId,
             method: req.method,
-            url: req.originalUrl,
+            // Query strings can carry OAuth codes/state or other sensitive data.
+            url: req.path,
             status: res.statusCode,
             durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
             ...(req.user ? { userId: req.user.id } : {}),
@@ -17,4 +18,3 @@ export function requestLoggerMiddleware(req: Request, res: Response, next: NextF
 
     next();
 }
-

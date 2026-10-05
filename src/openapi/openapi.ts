@@ -307,7 +307,7 @@ export const openApiDocument = {
         "/api/v1/tickets": {
             post: operation({
                 summary: "Crear ticket",
-                description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados con UNIQUE. Las solicitudes de software requieren TEACHER.",
+                description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados por categoría y ubicación normalizada (sin considerar subcategoría) con UNIQUE. Las solicitudes de software requieren TEACHER.",
                 tags: ["Tickets"], security: cookieSecurity,
                 roles: ["USER"],
                 requestBody: { required: true, content: json({ $ref: "#/components/schemas/CreateTicketRequest" }, {

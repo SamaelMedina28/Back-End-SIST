@@ -1,7 +1,7 @@
 {
-    "name": "template-vane",
+    "name": "sist-support-backend",
     "version": "1.0.0",
-    "description": "",
+    "description": "API REST del Sistema Integral de Soporte Técnico FCQI-UABC",
     "bin": {
         "vane": "./dist/cli/vane.js"
     },
@@ -9,9 +9,13 @@
     "scripts": {
         "dev": "tsx watch src/server.ts",
         "build": "tsc",
+        "typecheck": "tsc --noEmit",
         "test": "vitest run",
         "build:cli": "tsc && pnpm link -g .",
         "start": "node dist/src/server.js",
+        "db:migrate": "prisma migrate deploy",
+        "db:seed": "prisma db seed",
+        "prisma:generate": "prisma generate",
         "vane": "node ./dist/cli/vane.js"
     },
     "keywords": [],
