@@ -24,7 +24,6 @@ Las respuestas de error siguen el envelope del backend: `success: false`, `error
 | `TICKET_PRIORITY_NOT_CONFIGURED` | 409 | No hay prioridad efectiva en categoría/subcategoría; requiere configuración administrativa. |
 | `DUPLICATE_TICKET` | 409 | Ya existe un ticket activo de la misma categoría y ubicación normalizada; la subcategoría no diferencia la clave. |
 | `ACTIVE_TICKET_LIMIT_REACHED` | 409 | El usuario alcanzó el máximo de 10 tickets activos. |
-| `SOFTWARE_REQUEST_REQUIRES_TEACHER` | 403 | Solo una cuenta TEACHER puede crear esa solicitud de software. |
 | `INVALID_STATUS_TRANSITION`, `TICKET_NOT_ACTIVE`, `TICKET_STATE_NOT_ALLOWED_FOR_ACTIVITY` | 409 | La transición/actividad no es válida para el estado actual. |
 | `TICKET_ALREADY_ASSIGNED`, `ASSIGNEE_AREA_MISMATCH`, `INVALID_ASSIGNEE_ROLE` | 409 | Asignación conflictiva o destino no elegible/compatible; revisar ticket y técnico. |
 | `IDEMPOTENCY_CONFLICT` | 409 | La clave ya se usó con un body distinto; usar una nueva clave para otra operación. |

@@ -14,12 +14,6 @@ enum Role {
   ADMIN
 }
 
-enum CommunityType {
-  STUDENT
-  TEACHER
-  ADMINISTRATIVE
-}
-
 enum SupportArea {
   HARDWARE
   SOFTWARE
@@ -73,7 +67,6 @@ model User {
   fullName        String
   phone           String?
   role            Role          @default(USER)
-  communityType   CommunityType
   supportAreas    SupportArea[] @default([])
   skills          String[]      @default([])
   avatarUrl       String?
@@ -91,7 +84,6 @@ model User {
   idempotencyRecords   IdempotencyRecord[]
 
   @@index([role, isActive])
-  @@index([communityType, isActive])
 }
 
 model Category {
@@ -156,7 +148,6 @@ model Ticket {
   reporterNameSnapshot          String
   reporterEmailSnapshot         String
   reporterPhoneSnapshot         String?
-  reporterCommunityTypeSnapshot CommunityType
   categoryId                    String         @db.Uuid
   subcategoryId                 String?        @db.Uuid
   priority                      TicketPriority

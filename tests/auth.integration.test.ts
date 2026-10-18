@@ -21,7 +21,6 @@ import { SessionService } from "../src/modules/auth/session.service.js";
 import { toAuthenticatedUser } from "../src/modules/auth/user.mapper.js";
 import { resolveEffectivePriority } from "../src/modules/category/category.service.js";
 import {
-    CommunityType,
     FakeGoogleProvider,
     FakeCatalogRepository,
     FakeTicketRepository,
@@ -327,7 +326,6 @@ describe("complete profile", () => {
             .set("Cookie", onboardingCookieFor())
             .send({
                 institutionalId: "1287456",
-                communityType: CommunityType.STUDENT,
                 phone: null,
             })
             .expect(201);
@@ -348,7 +346,6 @@ describe("complete profile", () => {
             .set("Cookie", onboardingCookieFor())
             .send({
                 institutionalId: "1287456",
-                communityType: CommunityType.STUDENT,
                 phone: null,
                 [field]: value,
             })
@@ -364,7 +361,6 @@ describe("complete profile", () => {
             .set("Cookie", onboardingCookieFor())
             .send({
                 institutionalId: "1287456",
-                communityType: CommunityType.STUDENT,
                 phone: null,
             })
             .expect(409);
@@ -375,7 +371,7 @@ describe("complete profile", () => {
         const { app } = createContext();
         const response = await request(app)
             .post("/api/v1/auth/complete-profile")
-            .send({ institutionalId: "1287456", communityType: CommunityType.STUDENT })
+            .send({ institutionalId: "1287456" })
             .expect(401);
         expect(response.body.error.code).toBe("ONBOARDING_REQUIRED");
     });
@@ -392,7 +388,7 @@ describe("complete profile", () => {
         const response = await request(app)
             .post("/api/v1/auth/complete-profile")
             .set("Cookie", `${ONBOARDING_COOKIE}=${expired}`)
-            .send({ institutionalId: "1287456", communityType: CommunityType.STUDENT })
+            .send({ institutionalId: "1287456" })
             .expect(401);
         expect(response.body.error.code).toBe("ONBOARDING_EXPIRED");
     });
@@ -404,12 +400,12 @@ describe("complete profile", () => {
         await agent
             .post("/api/v1/auth/complete-profile")
             .set("Cookie", cookie)
-            .send({ institutionalId: "1287456", communityType: CommunityType.STUDENT })
+            .send({ institutionalId: "1287456" })
             .expect(201);
 
         const response = await agent
             .post("/api/v1/auth/complete-profile")
-            .send({ institutionalId: "9999999", communityType: CommunityType.STUDENT })
+            .send({ institutionalId: "9999999" })
             .expect(401);
         expect(response.body.error.code).toBe("ONBOARDING_REQUIRED");
     });

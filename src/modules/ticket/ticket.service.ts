@@ -91,7 +91,7 @@ export function toTicketDetail(ticket: TicketRecord) {
         id: ticket.id, code: ticket.code, title: ticket.title, description: ticket.description,
         reporter: {
             id: ticket.reporterId, fullName: ticket.reporterNameSnapshot, email: ticket.reporterEmailSnapshot,
-            phone: ticket.reporterPhoneSnapshot, communityType: ticket.reporterCommunityTypeSnapshot,
+            phone: ticket.reporterPhoneSnapshot,
         },
         category: { ...smallCategory(ticket.category), supportArea: ticket.category.supportArea },
         subcategory: smallSubcategory(ticket.subcategory), location: location(ticket),
@@ -142,9 +142,6 @@ export class TicketService {
         }
 
         if (category.requiresSoftwareDetails) {
-            if (user.communityType !== "TEACHER") {
-                throw new AppError(403, "SOFTWARE_REQUEST_REQUIRES_TEACHER", "Las solicitudes de instalación de software requieren una cuenta de docente.");
-            }
             if (!input.software) {
                 throw new AppError(422, "VALIDATION_ERROR", "Faltan los datos del software.", { software: ["Es obligatorio."] });
             }

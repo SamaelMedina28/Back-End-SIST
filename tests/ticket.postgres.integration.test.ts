@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Application } from "express";
-import { CommunityType, NotificationStatus, Role, SupportArea, TicketPriority, TicketStatus, type PrismaClient } from "../generated/prisma/client.js";
+import { NotificationStatus, Role, SupportArea, TicketPriority, TicketStatus, type PrismaClient } from "../generated/prisma/client.js";
 import { createPrismaClient } from "../lib/prisma.js";
 import { createApp } from "../src/app.js";
 import { PrismaUserRepository } from "../src/modules/auth/user.repository.js";
@@ -93,13 +93,12 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
     }
 
     async function createTestUser(input: {
-        role?: Role; communityType?: CommunityType; supportAreas?: SupportArea[]; fullName?: string; phone?: string | null;
+        role?: Role; supportAreas?: SupportArea[]; fullName?: string; phone?: string | null;
     } = {}) {
         const suffix = randomUUID();
         return prisma.user.create({ data: {
             email: `test-${suffix}@uabc.edu.mx`, institutionalId: suffix, fullName: input.fullName ?? "Persona Prueba",
             phone: input.phone ?? null, role: input.role ?? Role.USER,
-            communityType: input.communityType ?? CommunityType.STUDENT,
             supportAreas: input.supportAreas ?? [],
         } });
     }
@@ -168,7 +167,6 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
             title: input.title ?? "Ticket del dashboard", description: "Incidencia de prueba para agregados.",
             reporterId: reporter.id, reporterNameSnapshot: reporter.fullName,
             reporterEmailSnapshot: reporter.email, reporterPhoneSnapshot: reporter.phone,
-            reporterCommunityTypeSnapshot: reporter.communityType,
             categoryId: input.categoryId ?? hardwareId, priority: input.priority ?? TicketPriority.MEDIUM,
             status: input.status ?? TicketStatus.OPEN, building: "Edificio 6", room: "603",
             assigneeId: input.assigneeId ?? null, completedAt: input.completedAt ?? null,
@@ -385,8 +383,7 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
                 title: "Volumen reporte", description: "Fixture de agregación.",
                 reporterId: reporter.id, reporterNameSnapshot: reporter.fullName,
                 reporterEmailSnapshot: reporter.email, reporterPhoneSnapshot: reporter.phone,
-                reporterCommunityTypeSnapshot: reporter.communityType,
-                categoryId: hardwareId, priority: TicketPriority.MEDIUM, status: TicketStatus.OPEN,
+                    categoryId: hardwareId, priority: TicketPriority.MEDIUM, status: TicketStatus.OPEN,
                 building: "Edificio 6", room: "603", createdAt: new Date("2026-09-01T17:00:00Z"),
             };
         }) });
@@ -410,7 +407,6 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(ticket.reporterNameSnapshot).toBe("Nombre Histórico");
         expect(ticket.reporterPhoneSnapshot).toBe("6647654321");
         expect(ticket.reporterEmailSnapshot).toBe(user.email);
-        expect(ticket.reporterCommunityTypeSnapshot).toBe("STUDENT");
         expect(ticket.duplicateKey).toMatch(/^[a-f0-9]{64}$/u);
         expect(ticket.events).toHaveLength(1);
         expect(ticket.events[0]).toMatchObject({ type: "CREATED", actorId: user.id, fromStatus: null, toStatus: "OPEN" });
@@ -459,16 +455,14 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         expect(priority.body.error.code).toBe("TICKET_PRIORITY_NOT_CONFIGURED");
     });
 
-    it("restringe software a TEACHER y exige todos los campos", async () => {
+    it("exige todos los campos de software, incluida la aprobación de coordinación", async () => {
         const software = { name: "AutoCAD", version: "2027", downloadUrl: "https://example.com/autocad", coordinationApprovalReference: "OFICIO-2026" };
-        for (const communityType of [CommunityType.STUDENT, CommunityType.ADMINISTRATIVE]) {
-            const user = await createTestUser({ communityType });
-            expect((await post(user, { ...baseBody(softwareId), software })).body.error.code).toBe("SOFTWARE_REQUEST_REQUIRES_TEACHER");
-        }
-        const teacher = await createTestUser({ communityType: CommunityType.TEACHER });
-        expect((await post(teacher, { ...baseBody(softwareId), software: { name: "AutoCAD" } })).status).toBe(422);
-        expect((await post(teacher, { ...baseBody(hardwareId, hardwareSubId), software })).status).toBe(422);
-        const response = await post(teacher, { ...baseBody(softwareId), software });
+        const requester = await createTestUser();
+        const { coordinationApprovalReference: _approval, ...withoutApproval } = software;
+        expect((await post(requester, { ...baseBody(softwareId), software: withoutApproval })).status).toBe(422);
+        expect((await post(requester, { ...baseBody(softwareId), software: { name: "AutoCAD" } })).status).toBe(422);
+        expect((await post(requester, { ...baseBody(hardwareId, hardwareSubId), software })).status).toBe(422);
+        const response = await post(requester, { ...baseBody(softwareId), software });
         expect(response.status).toBe(201);
         const ticket = await prisma.ticket.findUniqueOrThrow({ where: { id: response.body.data.id } });
         expect(ticket.softwareName).toBe("AutoCAD");
@@ -574,8 +568,8 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
         const another = await createTestUser();
         const hardware = await createTestTicket(owner, { room: "RB1", title: "Proyector especial" });
         await createTestTicket(another, { room: "RB2" });
-        const teacher = await createTestUser({ communityType: CommunityType.TEACHER });
-        await post(teacher, { ...baseBody(softwareId, null, "RB3"), title: "Instalación Editor", software: {
+        const requester = await createTestUser();
+        await post(requester, { ...baseBody(softwareId, null, "RB3"), title: "Instalación Editor", software: {
             name: "Editor", version: "1", downloadUrl: "https://example.com", coordinationApprovalReference: "OF-1",
         } });
         const hardwareSupport = await createTestUser({ role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE] });
@@ -1415,7 +1409,7 @@ describe.runIf(Boolean(databaseUrl))("Tickets Core con PostgreSQL real", () => {
 
     function memberBody(suffix = randomUUID(), overrides: Record<string, unknown> = {}) {
         return { fullName: "  Ana Soporte  ", email: `Member-${suffix}@UABC.EDU.MX`,
-            institutionalId: `EMP-${suffix}`, communityType: CommunityType.ADMINISTRATIVE,
+            institutionalId: `EMP-${suffix}`,
             role: Role.SUPPORT, supportAreas: [SupportArea.HARDWARE], skills: ["  Proyectores  "], ...overrides };
     }
 

@@ -7,7 +7,7 @@ import type { SupportMemberRepository, SupportMemberTransaction } from "./suppor
 function listItem(member: UserEntity) {
     return {
         id: member.id, fullName: member.fullName, email: member.email,
-        institutionalId: member.institutionalId, communityType: member.communityType,
+        institutionalId: member.institutionalId,
         role: member.role, supportAreas: member.supportAreas, skills: member.skills,
         isActive: member.isActive, googleLinked: member.googleSubject !== null,
         lastLoginAt: member.lastLoginAt,

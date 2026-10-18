@@ -108,7 +108,6 @@ export class AuthService {
                 fullName: claims.fullName,
                 avatarUrl: claims.avatarUrl,
                 institutionalId: input.institutionalId,
-                communityType: input.communityType,
                 phone: input.phone ?? null,
             });
         } catch (error) {

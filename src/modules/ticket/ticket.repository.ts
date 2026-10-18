@@ -56,7 +56,6 @@ export class PrismaTicketRepository implements TicketRepository {
                         number, code, title: input.title, description: input.description,
                         reporterId: user.id, reporterNameSnapshot: user.fullName, reporterEmailSnapshot: user.email,
                         reporterPhoneSnapshot: input.contactPhone ?? user.phone,
-                        reporterCommunityTypeSnapshot: user.communityType,
                         categoryId: input.categoryId, subcategoryId: input.subcategoryId ?? null,
                         priority, status: TicketStatus.OPEN, building: input.building, room: input.room,
                         inventoryItemId: input.inventoryItemId,

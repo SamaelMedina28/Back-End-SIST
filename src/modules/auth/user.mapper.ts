@@ -9,7 +9,6 @@ export function toAuthenticatedUser(user: UserEntity): AuthenticatedUser {
         institutionalId: user.institutionalId,
         phone: user.phone,
         role: user.role,
-        communityType: user.communityType,
         supportAreas: user.supportAreas,
         skills: user.skills,
         avatarUrl: user.avatarUrl,

@@ -2161,3 +2161,10 @@ Estas observaciones son parte del diagnóstico de esta etapa; deben resolverse e
 - **Mantenimiento del starter:** no hay endpoints ni migraciones demo en el contrato vigente; el CLI Vane original sigue siendo utilidad del repositorio, separado de la API de soporte y no se invoca durante el despliegue normal.
 - **Infraestructura:** pruebas de concurrencia no certifican 100 usuarios ni SLA. 99.5% de disponibilidad, RPO 12 h, RTO 2 h y backups son responsabilidades de plataforma/operaciones.
 - El contrato exige una colección inicial de categorías, pero no fija si se cargará mediante seed, migración o bootstrap. Debe decidirse antes de preparar datos iniciales.
+
+## Adenda: eliminación de `communityType`
+
+- **Motivo:** `communityType` (`STUDENT`/`TEACHER`/`ADMINISTRATIVE`) lo elegía la propia persona en el onboarding, sin verificación. Su único efecto era limitar las solicitudes de software a `TEACHER`, lo que cualquiera podía evitar declarándose docente.
+- **Decisión:** se eliminan el enum, `User.communityType`, `Ticket.reporterCommunityTypeSnapshot` y el error `SOFTWARE_REQUEST_REQUIRES_TEACHER` (migración `20261018120000_remove_community_type`). El onboarding solo pide `institutionalId` y `phone` opcional; el preaprovisionamiento de soporte deja de recibir `communityType`.
+- **Control vigente para software:** cualquier `USER` puede solicitarlo, pero debe aportar `name`, `version`, `downloadUrl` y `coordinationApprovalReference`; el personal de soporte valida esa referencia al atender el ticket.
+- Las menciones a `communityType` y `TEACHER` en el texto normativo anterior quedan sustituidas por esta adenda.

@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-    CommunityType,
     Role,
     SupportArea,
     TicketPriority,
@@ -121,7 +120,6 @@ export function makeUser(overrides: Partial<UserEntity> = {}): UserEntity {
         fullName: "Usuario Prueba",
         phone: null,
         role: Role.USER,
-        communityType: CommunityType.STUDENT,
         supportAreas: [],
         skills: [],
         avatarUrl: null,
@@ -395,4 +393,4 @@ export class FakeCatalogRepository implements CatalogRepository {
     }
 }
 
-export { CommunityType, Role, SupportArea, TicketPriority };
+export { Role, SupportArea, TicketPriority };

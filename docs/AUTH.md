@@ -42,7 +42,6 @@ El frontend envía únicamente:
 ```json
 {
   "institutionalId": "1287456",
-  "communityType": "STUDENT",
   "phone": null
 }
 ```

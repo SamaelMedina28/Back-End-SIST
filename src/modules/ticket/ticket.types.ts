@@ -76,7 +76,7 @@ export interface TicketMutationTransaction {
 export interface TicketRecord {
     id: string; number: number; code: string; title: string; description: string; reporterId: string;
     reporterNameSnapshot: string; reporterEmailSnapshot: string; reporterPhoneSnapshot: string | null;
-    reporterCommunityTypeSnapshot: string; categoryId: string; subcategoryId: string | null; priority: TicketPriority;
+    categoryId: string; subcategoryId: string | null; priority: TicketPriority;
     status: TicketStatus; building: string; room: string | null; inventoryItemId: string | null;
     assigneeId: string | null; assignedAt: Date | null; softwareName: string | null; softwareVersion: string | null;
     softwareDownloadUrl: string | null; coordinationApprovalReference: string | null; duplicateKey: string | null;

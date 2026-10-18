@@ -1,4 +1,4 @@
-import type { CommunityType, Role, SupportArea } from "../../generated/prisma/client.js";
+import type { Role, SupportArea } from "../../generated/prisma/client.js";
 
 export interface AuthenticatedUser {
     id: string;
@@ -7,7 +7,6 @@ export interface AuthenticatedUser {
     institutionalId: string;
     phone: string | null;
     role: Role;
-    communityType: CommunityType;
     supportAreas: SupportArea[];
     skills: string[];
     avatarUrl: string | null;

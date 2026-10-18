@@ -115,7 +115,7 @@ export const openApiDocument = {
                 requestBody: {
                     required: true,
                     content: json({ $ref: "#/components/schemas/CompleteProfileInput" }, {
-                        institutionalId: "1287456", communityType: "STUDENT", phone: null,
+                        institutionalId: "1287456", phone: null,
                     }),
                 },
                 responses: {
@@ -323,7 +323,7 @@ export const openApiDocument = {
         "/api/v1/tickets": {
             post: operation({
                 summary: "Crear ticket",
-                description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados por categoría y ubicación normalizada (sin considerar subcategoría) con UNIQUE. Las solicitudes de software requieren TEACHER.",
+                description: "Crea un ticket OPEN y su evento CREATED de forma atómica. La prioridad proviene de la subcategoría o categoría; el servidor guarda snapshots, limita a 10 tickets activos por USER y protege duplicados por categoría y ubicación normalizada (sin considerar subcategoría) con UNIQUE. Las solicitudes de software requieren la referencia de aprobación de coordinación.",
                 tags: ["Tickets"], security: cookieSecurity,
                 roles: ["USER"],
                 requestBody: { required: true, content: json({ $ref: "#/components/schemas/CreateTicketRequest" }, {
@@ -724,9 +724,9 @@ export const openApiDocument = {
                     technicianWorkload: { type: "array", items: { $ref: "#/components/schemas/TechnicianWorkloadItem" } },
                 } },
             } },
-            SupportMemberListItem: { type: "object", required: ["id", "fullName", "email", "institutionalId", "communityType", "role", "supportAreas", "skills", "isActive", "googleLinked", "lastLoginAt"], properties: {
+            SupportMemberListItem: { type: "object", required: ["id", "fullName", "email", "institutionalId", "role", "supportAreas", "skills", "isActive", "googleLinked", "lastLoginAt"], properties: {
                 id: { type: "string", format: "uuid" }, fullName: { type: "string" }, email: { type: "string", format: "email" },
-                institutionalId: { type: "string" }, communityType: { type: "string", enum: ["STUDENT", "TEACHER", "ADMINISTRATIVE"] },
+                institutionalId: { type: "string" },
                 role: { type: "string", enum: ["SUPPORT", "SUB_MANAGER"] },
                 supportAreas: { type: "array", minItems: 0, uniqueItems: true, items: { type: "string", enum: ["HARDWARE", "SOFTWARE", "NETWORKS", "ADMINISTRATIVE"] } },
                 skills: { type: "array", items: { type: "string" } }, isActive: { type: "boolean" }, googleLinked: { type: "boolean" },
@@ -739,10 +739,9 @@ export const openApiDocument = {
                 } },
             ] },
             CreateSupportMemberRequest: { type: "object", additionalProperties: false,
-                required: ["fullName", "email", "institutionalId", "communityType", "role", "supportAreas", "skills"], properties: {
+                required: ["fullName", "email", "institutionalId", "role", "supportAreas", "skills"], properties: {
                     fullName: { type: "string", minLength: 1, maxLength: 150 }, email: { type: "string", format: "email" },
                     institutionalId: { type: "string", minLength: 1, maxLength: 100 },
-                    communityType: { type: "string", enum: ["STUDENT", "TEACHER", "ADMINISTRATIVE"] },
                     role: { type: "string", enum: ["SUPPORT", "SUB_MANAGER"] },
                     supportAreas: { type: "array", minItems: 1, uniqueItems: true, items: { type: "string", enum: ["HARDWARE", "SOFTWARE", "NETWORKS", "ADMINISTRATIVE"] } },
                     skills: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 100 } },
@@ -894,12 +893,11 @@ export const openApiDocument = {
             },
             ValidationErrorResponse: { $ref: "#/components/schemas/StandardErrorResponse" },
             User: {
-                type: "object", required: ["id", "email", "fullName", "institutionalId", "phone", "role", "communityType", "supportAreas", "skills", "avatarUrl"],
+                type: "object", required: ["id", "email", "fullName", "institutionalId", "phone", "role", "supportAreas", "skills", "avatarUrl"],
                 properties: {
                     id: { type: "string", format: "uuid" }, email: { type: "string", format: "email" },
                     fullName: { type: "string" }, institutionalId: { type: "string" }, phone: { type: ["string", "null"] },
                     role: { type: "string", enum: ["USER", "SUPPORT", "SUB_MANAGER", "ADMIN"] },
-                    communityType: { type: "string", enum: ["STUDENT", "TEACHER", "ADMINISTRATIVE"] },
                     supportAreas: { type: "array", items: { type: "string" } }, skills: { type: "array", items: { type: "string" } },
                     avatarUrl: { type: ["string", "null"] },
                 },
@@ -1000,7 +998,7 @@ export const openApiDocument = {
             } },
             TicketDetail: { type: "object", required: ["id", "code", "title", "description", "reporter", "category", "subcategory", "location", "priority", "status", "assignee", "inventoryItem", "software", "createdAt", "updatedAt", "assignedAt", "completedAt", "cancelledAt"], properties: {
                 id: { type: "string", format: "uuid" }, code: { type: "string" }, title: { type: "string" }, description: { type: "string" },
-                reporter: { type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" }, email: { type: "string", format: "email" }, phone: { type: ["string", "null"] }, communityType: { type: "string" } } },
+                reporter: { type: "object", properties: { id: { type: "string", format: "uuid" }, fullName: { type: "string" }, email: { type: "string", format: "email" }, phone: { type: ["string", "null"] } } },
                 category: { type: "object", properties: { id: { type: "string", format: "uuid" }, code: { type: "string" }, name: { type: "string" }, supportArea: { type: "string" } } },
                 subcategory: { anyOf: [{ $ref: "#/components/schemas/TicketSubcategorySummary" }, { type: "null" }] },
                 location: { type: "object", properties: { building: { type: "string" }, room: { type: ["string", "null"] } } },
@@ -1024,10 +1022,9 @@ export const openApiDocument = {
                 } },
             } },
             CompleteProfileInput: {
-                type: "object", required: ["institutionalId", "communityType"], additionalProperties: false,
+                type: "object", required: ["institutionalId"], additionalProperties: false,
                 properties: {
                     institutionalId: { type: "string" },
-                    communityType: { type: "string", enum: ["STUDENT", "TEACHER", "ADMINISTRATIVE"] },
                     phone: { type: ["string", "null"] },
                 },
             },

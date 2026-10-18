@@ -4,7 +4,7 @@ Este documento describe el modelo Prisma del Sistema Integral de Soporte Técnic
 
 ## Entidades
 
-- **User**: identidad institucional y permisos actuales. Se vincula con Google mediante `googleSubject`, no almacena contraseña. `role` representa permisos del sistema; `communityType` representa si la persona es estudiante, docente o administrativa.
+- **User**: identidad institucional y permisos actuales. Se vincula con Google mediante `googleSubject`, no almacena contraseña. `role` representa permisos del sistema; no se guarda si la persona es estudiante, docente o administrativa (ver adenda en `BACKEND_CONTRACT.md`).
 - **Category**: categoría técnica del ticket, su área de soporte y prioridad predeterminada. `defaultPriority` es nullable porque el contrato deja algunas categorías configurables.
 - **Subcategory**: clasificación específica dentro de una categoría. Su prioridad puede ser nullable para heredar la de Category.
 - **SupportSuggestion**: sugerencias reutilizables del catálogo, asociadas a una categoría y opcionalmente a una subcategoría.
@@ -34,7 +34,6 @@ Las relaciones históricas usan restricciones que impiden borrar físicamente re
 ## Enums
 
 - **Role**: `USER`, `SUPPORT`, `SUB_MANAGER`, `ADMIN`. Determina capacidades y autorización.
-- **CommunityType**: `STUDENT`, `TEACHER`, `ADMINISTRATIVE`. Describe la comunidad institucional.
 - **SupportArea**: áreas funcionales de soporte.
 - **TicketPriority**: `LOW`, `MEDIUM`, `HIGH`.
 - **TicketStatus**: ciclo de vida del ticket.
@@ -42,14 +41,9 @@ Las relaciones históricas usan restricciones que impiden borrar físicamente re
 - **TicketEventType**: tipos de eventos históricos.
 - **NotificationStatus**: estado del procesamiento de outbox.
 
-### Role y CommunityType
+### Role
 
-No son equivalentes:
-
-- `role` controla qué operaciones puede realizar la cuenta.
-- `communityType` identifica la relación de la persona con la institución.
-
-Por ejemplo, una persona puede tener `communityType = STUDENT` y `role = SUPPORT`, como miembro de soporte pre-registrado.
+`role` es el único atributo que controla qué operaciones puede realizar la cuenta. Todo usuario nuevo nace como `USER`; solo un ADMIN puede preaprovisionar `SUPPORT`/`SUB_MANAGER`.
 
 ## Ticket y ActivityLog
 
@@ -59,7 +53,7 @@ Un **ActivityLog** es una entrada de trabajo técnico asociada a un ticket. Un t
 
 ## Snapshots
 
-Los snapshots preservan el contexto histórico en el momento de crear el registro. Por ejemplo, un ticket conserva el nombre, correo, teléfono y tipo de comunidad del reportero aunque la cuenta cambie después. La duplicación es intencional y evita que el historial dependa de valores actuales.
+Los snapshots preservan el contexto histórico en el momento de crear el registro. Por ejemplo, un ticket conserva el nombre, correo y teléfono del reportero aunque la cuenta cambie después. La duplicación es intencional y evita que el historial dependa de valores actuales.
 
 ## Soft delete
 
@@ -74,7 +68,7 @@ Las relaciones críticas usan `Restrict`; no se configuraron cascadas destructiv
 1. Validará la identidad, el dominio y `email_verified`.
 2. Guardará un estado temporal de onboarding seguro.
 3. Redirigirá al frontend a `/auth/complete-profile`.
-4. Recibirá `institutionalId`, `communityType` y `phone` opcional.
+4. Recibirá `institutionalId` y `phone` opcional.
 5. Creará el `User` con todos sus campos obligatorios y `role = USER`.
 
 Para miembros `SUPPORT` o `SUB_MANAGER` preaprovisionados, el flujo busca la cuenta por email y vincula `googleSubject` sin crear un registro nuevo ni modificar su rol, áreas o habilidades.

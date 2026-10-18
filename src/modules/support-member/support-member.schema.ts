@@ -1,4 +1,4 @@
-import { CommunityType, Role, SupportArea } from "../../../generated/prisma/client.js";
+import { Role, SupportArea } from "../../../generated/prisma/client.js";
 import { z } from "zod";
 
 const supportRole = z.enum([Role.SUPPORT, Role.SUB_MANAGER]);
@@ -11,7 +11,6 @@ export const supportMemberCreateSchema = z.object({
     fullName: z.string().trim().min(1).max(150),
     email: z.string().trim().toLowerCase().pipe(z.email()),
     institutionalId: z.string().trim().min(1).max(100),
-    communityType: z.enum(CommunityType),
     role: supportRole,
     supportAreas: areas.min(1),
     skills,

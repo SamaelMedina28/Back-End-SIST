@@ -30,7 +30,6 @@ window.location.href = `${API_URL}/api/v1/auth/google`;
 ```json
 {
   "institutionalId": "1287456",
-  "communityType": "STUDENT",
   "phone": null
 }
 ```
@@ -180,7 +179,7 @@ Crea un ticket y su evento inicial. Body JSON estricto:
 }
 ```
 
-`title` tiene máximo 150 caracteres tras `trim`; `description`, máximo 50 palabras separadas por espacios Unicode. `room`, `contactPhone` e `inventoryItemId` son opcionales o null; `subcategoryId` también acepta null, pero es obligatoria cuando la categoría tiene subcategorías activas. El teléfono acepta formatos habituales con al menos siete dígitos. Si `category.requiresSoftwareDetails` es true, solo `TEACHER` puede crear la solicitud y debe añadir `software` completo: `name`, `version`, `downloadUrl` (URL válida) y `coordinationApprovalReference`. En otras categorías, `software` se rechaza. Se valida que el inventario exista y esté activo cuando se indica un artículo.
+`title` tiene máximo 150 caracteres tras `trim`; `description`, máximo 50 palabras separadas por espacios Unicode. `room`, `contactPhone` e `inventoryItemId` son opcionales o null; `subcategoryId` también acepta null, pero es obligatoria cuando la categoría tiene subcategorías activas. El teléfono acepta formatos habituales con al menos siete dígitos. Si `category.requiresSoftwareDetails` es true, cualquier `USER` puede crear la solicitud, pero debe añadir `software` completo: `name`, `version`, `downloadUrl` (URL válida) y `coordinationApprovalReference`. En otras categorías, `software` se rechaza. Se valida que el inventario exista y esté activo cuando se indica un artículo.
 
 El backend calcula `priority = subcategory.priority ?? category.defaultPriority`; si ambas son null responde `409 TICKET_PRIORITY_NOT_CONFIGURED`. Guarda `status=OPEN`, snapshots del reportero y teléfono `contactPhone ?? user.phone ?? null`. Genera `number` desde la secuencia PostgreSQL y `code` como `TK-` más el número con al menos seis dígitos. La ubicación visible conserva sus valores recortados; `duplicateKey` usa SHA-256 de `categoryId` más edificio y aula normalizados con NFKC, trim, minúsculas y espacios colapsados. **La subcategoría no forma parte de la clave**: una incidencia de la misma categoría y ubicación activa no puede repetirse aunque se elija otra subcategoría. El índice único impide duplicados activos incluso entre reporteros. `Ticket` y `TicketEvent CREATED` se guardan en la misma transacción.
 
@@ -201,7 +200,7 @@ Respuesta `201`:
 }
 ```
 
-Errores: `401 AUTHENTICATION_REQUIRED`; `403 FORBIDDEN` para roles distintos de `USER` o `SOFTWARE_REQUEST_REQUIRES_TEACHER` para comunidad distinta de docente; `404 CATEGORY_NOT_FOUND`, `SUBCATEGORY_NOT_FOUND`, `INVENTORY_ITEM_NOT_FOUND`; `409 CATEGORY_INACTIVE`, `SUBCATEGORY_INACTIVE`, `INVENTORY_ITEM_INACTIVE`, `TICKET_PRIORITY_NOT_CONFIGURED`, `DUPLICATE_TICKET`, `ACTIVE_TICKET_LIMIT_REACHED`; `422 VALIDATION_ERROR` o `SUBCATEGORY_CATEGORY_MISMATCH`. Los errores conservan `{ success: false, error: { code, message, fields? }, requestId }`.
+Errores: `401 AUTHENTICATION_REQUIRED`; `403 FORBIDDEN` para roles distintos de `USER`; `404 CATEGORY_NOT_FOUND`, `SUBCATEGORY_NOT_FOUND`, `INVENTORY_ITEM_NOT_FOUND`; `409 CATEGORY_INACTIVE`, `SUBCATEGORY_INACTIVE`, `INVENTORY_ITEM_INACTIVE`, `TICKET_PRIORITY_NOT_CONFIGURED`, `DUPLICATE_TICKET`, `ACTIVE_TICKET_LIMIT_REACHED`; `422 VALIDATION_ERROR` o `SUBCATEGORY_CATEGORY_MISMATCH`. Los errores conservan `{ success: false, error: { code, message, fields? }, requestId }`.
 
 ```ts
 const ticket = await api("/tickets", { method: "POST", body: JSON.stringify({
@@ -226,7 +225,7 @@ const { data, meta } = await response.json();
 
 ### `GET /api/v1/tickets/:id`
 
-`id` debe ser UUID. Responde `200` con detalle, incluyendo descripción, reportero desde snapshots históricos (`id`, `fullName`, `email`, `phone`, `communityType`), categoría y subcategoría, ubicación, prioridad, estado, asignado, resumen de inventario, `software` o null y fechas `createdAt`, `updatedAt`, `assignedAt`, `completedAt`, `cancelledAt`. Si el ticket no existe: `404 TICKET_NOT_FOUND`; si existe pero está fuera del alcance: `403 FORBIDDEN_TICKET`; UUID inválido: `422 VALIDATION_ERROR`.
+`id` debe ser UUID. Responde `200` con detalle, incluyendo descripción, reportero desde snapshots históricos (`id`, `fullName`, `email`, `phone`), categoría y subcategoría, ubicación, prioridad, estado, asignado, resumen de inventario, `software` o null y fechas `createdAt`, `updatedAt`, `assignedAt`, `completedAt`, `cancelledAt`. Si el ticket no existe: `404 TICKET_NOT_FOUND`; si existe pero está fuera del alcance: `403 FORBIDDEN_TICKET`; UUID inválido: `422 VALIDATION_ERROR`.
 
 ```ts
 const ticket = await api(`/tickets/${ticketId}`);
@@ -489,24 +488,23 @@ Todas las rutas documentan `401` por sesión faltante, `403` por rol y `422 VALI
 
 ## Miembros de soporte
 
-Las cinco rutas `/api/v1/support-members` requieren sesión de `ADMIN`; `USER`, `SUPPORT` y `SUB_MANAGER` reciben `403`. Se reutiliza `User` con roles `SUPPORT`/`SUB_MANAGER`; no hay contraseña ni invitación por correo. Un miembro se crea antes del primer acceso Google (`googleSubject=null`), y OAuth lo vincula por email sin cambiar rol, comunidad, áreas, habilidades ni identificador institucional. Las respuestas nunca incluyen `googleSubject`, teléfono ni avatar; `googleLinked` indica si ya existe vínculo.
+Las cinco rutas `/api/v1/support-members` requieren sesión de `ADMIN`; `USER`, `SUPPORT` y `SUB_MANAGER` reciben `403`. Se reutiliza `User` con roles `SUPPORT`/`SUB_MANAGER`; no hay contraseña ni invitación por correo. Un miembro se crea antes del primer acceso Google (`googleSubject=null`), y OAuth lo vincula por email sin cambiar rol, áreas, habilidades ni identificador institucional. Las respuestas nunca incluyen `googleSubject`, teléfono ni avatar; `googleLinked` indica si ya existe vínculo.
 
 ### `GET /api/v1/support-members`
 
 Filtros opcionales: `search` (case-insensitive en nombre, email e identificador), `role` (`SUPPORT` o `SUB_MANAGER`), `supportArea` (`HARDWARE`, `SOFTWARE`, `NETWORKS`, `ADMINISTRATIVE`) y `active` (`true` por defecto, o `false`). Paginación estándar: `page=1`, `pageSize=20`, máximo 100; orden `fullName ASC, id ASC`. Un filtro inválido responde `422 VALIDATION_ERROR`. Para poblar el selector administrativo de asignación usa `?supportArea=HARDWARE&active=true`; la asignación vuelve a comprobar en servidor rol, actividad y área.
 
-Respuesta `{ success: true, data: [...], meta: { page, pageSize, total, totalPages } }`. Cada elemento contiene `id`, `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas`, `skills`, `isActive`, `googleLinked` y `lastLoginAt` (nullable).
+Respuesta `{ success: true, data: [...], meta: { page, pageSize, total, totalPages } }`. Cada elemento contiene `id`, `fullName`, `email`, `institutionalId`, `role`, `supportAreas`, `skills`, `isActive`, `googleLinked` y `lastLoginAt` (nullable).
 
 ### `POST /api/v1/support-members`
 
-Body estricto: exactamente los campos `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas` y `skills`. `fullName` e `institutionalId` se recortan y no pueden estar vacíos; el identificador admite letras y números. `email` se normaliza a minúsculas y debe pertenecer a `ALLOWED_EMAIL_DOMAINS` (si no, `403 EMAIL_DOMAIN_NOT_ALLOWED`). El rol solo puede ser `SUPPORT` o `SUB_MANAGER`; áreas no vacías y sin duplicados; habilidades pueden ser `[]`, se recortan y no aceptan vacías ni duplicados sin distinguir mayúsculas. `USER`/`ADMIN` o campos adicionales responden `422`. La respuesta `201` usa el detalle e incluye `createdAt`/`updatedAt`.
+Body estricto: exactamente los campos `fullName`, `email`, `institutionalId`, `role`, `supportAreas` y `skills`. `fullName` e `institutionalId` se recortan y no pueden estar vacíos; el identificador admite letras y números. `email` se normaliza a minúsculas y debe pertenecer a `ALLOWED_EMAIL_DOMAINS` (si no, `403 EMAIL_DOMAIN_NOT_ALLOWED`). El rol solo puede ser `SUPPORT` o `SUB_MANAGER`; áreas no vacías y sin duplicados; habilidades pueden ser `[]`, se recortan y no aceptan vacías ni duplicados sin distinguir mayúsculas. `USER`/`ADMIN` o campos adicionales responden `422`. La respuesta `201` usa el detalle e incluye `createdAt`/`updatedAt`.
 
 ```json
 {
   "fullName": "Ana Soporte",
   "email": "ana@uabc.edu.mx",
   "institutionalId": "EMP-A42",
-  "communityType": "ADMINISTRATIVE",
   "role": "SUPPORT",
   "supportAreas": ["HARDWARE"],
   "skills": ["Proyectores"]
@@ -521,7 +519,7 @@ Devuelve el detalle también cuando `isActive=false`. UUID inválido: `422`; id 
 
 ### `PATCH /api/v1/support-members/:id`
 
-Admite parcialmente solo `fullName`, `role`, `supportAreas`, `skills`, `isActive`. Permite `SUPPORT` ↔ `SUB_MANAGER`, baja y reactivación. Un miembro activo debe conservar al menos un área; un PATCH vacío o idéntico devuelve `200` sin modificar `updatedAt`. No se puede alterar email, institutionalId, communityType o vínculo Google. La desactivación con tickets asignados `OPEN`, `IN_REVIEW` o `IN_PROGRESS` devuelve `409 SUPPORT_MEMBER_HAS_ACTIVE_TICKETS`.
+Admite parcialmente solo `fullName`, `role`, `supportAreas`, `skills`, `isActive`. Permite `SUPPORT` ↔ `SUB_MANAGER`, baja y reactivación. Un miembro activo debe conservar al menos un área; un PATCH vacío o idéntico devuelve `200` sin modificar `updatedAt`. No se puede alterar email, institutionalId o vínculo Google. La desactivación con tickets asignados `OPEN`, `IN_REVIEW` o `IN_PROGRESS` devuelve `409 SUPPORT_MEMBER_HAS_ACTIVE_TICKETS`.
 
 ### `DELETE /api/v1/support-members/:id`
 

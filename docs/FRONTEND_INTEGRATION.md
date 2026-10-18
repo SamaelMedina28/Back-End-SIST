@@ -65,7 +65,7 @@ El backend restringe CORS a `FRONTEND_URL` y permite credenciales.
 
 ```text
 /auth/complete-profile
-→ el frontend muestra institutionalId, communityType y phone opcional
+→ el frontend muestra institutionalId y phone opcional
 → POST /api/v1/auth/complete-profile con credentials: include
 → el backend crea User y sesión
 → el frontend redirige al dashboard
@@ -84,7 +84,6 @@ await fetch(
     },
     body: JSON.stringify({
       institutionalId: "1287456",
-      communityType: "STUDENT",
       phone: null,
     }),
   },
@@ -238,7 +237,7 @@ const ticket = await api<{ id: string; code: string }>("/tickets", {
 });
 ```
 
-Para una categoría con `requiresSoftwareDetails: true`, muestra los cuatro campos de software y permite enviar el formulario solo a cuentas `communityType: "TEACHER"`:
+Para una categoría con `requiresSoftwareDetails: true`, muestra los cuatro campos de software; todos son obligatorios, incluida la referencia de aprobación de coordinación:
 
 ```ts
 const software = {
@@ -457,7 +456,7 @@ const { data: candidates, meta } = await api(
 
 Este filtro ofrece candidatos compatibles, pero `PUT /tickets/:id/assignee` vuelve a validar rol, actividad y área: maneja `409 ASSIGNEE_INACTIVE` y `409 ASSIGNEE_AREA_MISMATCH` si cambiaron mientras estaba abierta la pantalla. La lista incluye `googleLinked`, no `googleSubject`.
 
-Para preaprovisionar, envía `fullName`, `email`, `institutionalId`, `communityType`, `role`, `supportAreas` y `skills`:
+Para preaprovisionar, envía `fullName`, `email`, `institutionalId`, `role`, `supportAreas` y `skills`:
 
 ```ts
 const created = await api("/support-members", {
@@ -466,7 +465,6 @@ const created = await api("/support-members", {
     fullName: "Ana Soporte",
     email: "ana@uabc.edu.mx",
     institutionalId: "EMP-A42",
-    communityType: "ADMINISTRATIVE",
     role: "SUPPORT",
     supportAreas: ["HARDWARE"],
     skills: ["Proyectores"],
