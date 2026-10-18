@@ -6,6 +6,7 @@ import type { CatalogRepository } from "../category/category.types.js";
 import type { AuthenticatedUser } from "../../types/auth.js";
 import type { TicketCreateInput, TicketEventRecord, TicketQuery, TicketRecord, TicketRepository, TicketMutationSnapshot, MutationActor, TicketListSource } from "./ticket.types.js";
 import { supportAreaTicketFilter } from "./ticket.scope.js";
+import { isTicketStatusTransitionAllowed } from "./ticket-status-transition.policy.js";
 import { NOTIFICATION_TYPES } from "../notification/notification.constants.js";
 
 export function normalizeLocation(value: string | null | undefined): string | null {
@@ -25,12 +26,6 @@ const smallSubcategory = (value: TicketRecord["subcategory"]) => value ? ({ id: 
 const assignee = (value: TicketRecord["assignee"]) => value ? ({ id: value.id, fullName: value.fullName }) : null;
 const location = (value: Pick<TicketRecord, "building" | "room">) => ({ building: value.building, room: value.room });
 const ACTIVE_STATUSES: TicketStatus[] = [TicketStatus.OPEN, TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS];
-const transitions: Record<TicketStatus, TicketStatus[]> = {
-    OPEN: [TicketStatus.IN_REVIEW, TicketStatus.IN_PROGRESS, TicketStatus.CANCELLED],
-    IN_REVIEW: [TicketStatus.IN_PROGRESS, TicketStatus.CANCELLED],
-    IN_PROGRESS: [TicketStatus.COMPLETED, TicketStatus.CANCELLED],
-    COMPLETED: [], CANCELLED: [],
-};
 const fail = (status: number, code: string, message: string): never => { throw new AppError(status, code, message); };
 const requireActor = (actor: MutationActor | null): MutationActor => {
     if (!actor || !actor.isActive) return fail(401, "INVALID_SESSION", "La sesión no es válida.");
@@ -315,7 +310,7 @@ export class TicketService {
             }
 
             assertActive(ticket);
-            if (status !== ticket.status && !transitions[ticket.status].includes(status)) {
+            if (status !== ticket.status && !isTicketStatusTransitionAllowed(ticket.status, status)) {
                 fail(409, "INVALID_STATUS_TRANSITION", "La transición de estado solicitada no está permitida.");
             }
             let result: Record<string, unknown>;
